@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment</div>
+</div>
+
+<div class="container narrow">
+  <div class="card">
+    <div style="display:flex; gap:8px; margin-bottom:18px;" role="tablist" aria-label="Choose login or register">
+      <button id="tabLogin" class="btn-primary" style="flex:1" role="tab" aria-selected="true">Log In</button>
+      <button id="tabRegister" class="btn-secondary" style="flex:1" role="tab" aria-selected="false">Sign Up (Student)</button>
+    </div>
+
+    <div id="errorBox" class="error-banner" style="display:none" role="alert"></div>
+
+    <form id="loginForm">
+      <label for="loginEmail">Email</label>
+      <input type="email" id="loginEmail" required autocomplete="email">
+      <label for="loginPassword">Password</label>
+      <input type="password" id="loginPassword" required autocomplete="current-password">
+      <button type="submit" class="btn-primary btn-block">Log In</button>
+      <p class="hint">Works for both students and teachers.</p>
+    </form>
+
+    <form id="registerForm" style="display:none">
+      <p class="hint">Public sign-up creates a <strong>student</strong> account. Teacher accounts require an access code — see the link below.</p>
+      <label for="regName">Full Name</label>
+      <input type="text" id="regName" required autocomplete="name">
+      <label for="regEmail">Email</label>
+      <input type="email" id="regEmail" required autocomplete="email">
+      <label for="regPassword">Password</label>
+      <input type="password" id="regPassword" required minlength="8" autocomplete="new-password">
+      <button type="submit" class="btn-primary btn-block">Create Student Account</button>
+    </form>
+
+    <div id="googleSection" style="display:none; margin-top:14px;">
+      <div class="divider"><span>or</span></div>
+      <div id="googleButton" style="display:flex; justify-content:center;"></div>
+      <p class="hint" style="text-align:center;">Requires an internet connection.</p>
+    </div>
+
+    <p class="form-footer" id="footerHint">New here? <a href="#" id="switchToRegister">Create a student account</a></p>
+    <p class="form-footer"><a href="/teacher-signup.html">Are you a teacher? Sign up here</a></p>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const tabLogin = document.getElementById("tabLogin");
+const tabRegister = document.getElementById("tabRegister");
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+const errorBox = document.getElementById("errorBox");
+const footerHint = document.getElementById("footerHint");
+
+function showError(msg) {
+  errorBox.textContent = msg;
+  errorBox.style.display = "block";
+}
+function clearError() { errorBox.style.display = "none"; }
+
+function setTab(which) {
+  clearError();
+  const isLogin = which === "login";
+  loginForm.style.display = isLogin ? "block" : "none";
+  registerForm.style.display = isLogin ? "none" : "block";
+  tabLogin.className = isLogin ? "btn-primary" : "btn-secondary";
+  tabRegister.className = isLogin ? "btn-secondary" : "btn-primary";
+  tabLogin.setAttribute("aria-selected", isLogin);
+  tabRegister.setAttribute("aria-selected", !isLogin);
+  footerHint.innerHTML = isLogin
+    ? `New here? <a href="#" id="switchToRegister">Create a student account</a>`
+    : `Already have an account? <a href="#" id="switchToLogin">Log in</a>`;
+  const link = document.getElementById(isLogin ? "switchToRegister" : "switchToLogin");
+  link.addEventListener("click", (e) => { e.preventDefault(); setTab(isLogin ? "register" : "login"); });
+}
+
+tabLogin.addEventListener("click", () => setTab("login"));
+tabRegister.addEventListener("click", () => setTab("register"));
+document.getElementById("switchToRegister").addEventListener("click", (e) => { e.preventDefault(); setTab("register"); });
+
+function redirectForRole(role) {
+  window.location.href = role === "TEACHER" ? "/teacher-dashboard.html" : "/student-dashboard.html";
+}
+
+loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearError();
+  const submitBtn = loginForm.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  try {
+    const { user } = await api("/api/auth/login", {
+      method: "POST",
+      body: { email: document.getElementById("loginEmail").value, password: document.getElementById("loginPassword").value }
+    });
+    redirectForRole(user.role);
+  } catch (err) {
+    showError(err.message);
+    submitBtn.disabled = false;
+  }
+});
+
+registerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearError();
+  const submitBtn = registerForm.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  try {
+    // Public sign-up on the homepage is always a STUDENT account — teacher
+    // accounts can only be created via the code-gated /teacher-signup.html.
+    const { user } = await api("/api/auth/register", {
+      method: "POST",
+      body: {
+        fullName: document.getElementById("regName").value,
+        email: document.getElementById("regEmail").value,
+        password: document.getElementById("regPassword").value,
+        role: "STUDENT"
+      }
+    });
+    redirectForRole(user.role);
+  } catch (err) {
+    showError(err.message);
+    submitBtn.disabled = false;
+  }
+});
+
+// ---- Optional "Sign in with Google" (only when online + configured) ----
+async function setupGoogleSignIn() {
+  try {
+    const config = await api("/api/config");
+    if (!config.googleClientId) return; // not configured — stay offline-friendly, no button shown
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (!window.google || !window.google.accounts) return;
+      window.google.accounts.id.initialize({
+        client_id: config.googleClientId,
+        callback: async (response) => {
+          clearError();
+          try {
+            const { user } = await api("/api/auth/google", { method: "POST", body: { credential: response.credential } });
+            redirectForRole(user.role);
+          } catch (err) {
+            showError(err.message);
+          }
+        }
+      });
+      document.getElementById("googleSection").style.display = "block";
+      window.google.accounts.id.renderButton(document.getElementById("googleButton"), { theme: "outline", size: "large", width: 280 });
+    };
+    script.onerror = () => { /* offline or blocked — silently skip, rest of the app still works */ };
+    document.head.appendChild(script);
+  } catch {
+    // /api/config itself failed (shouldn't happen locally) — skip Google UI silently.
+  }
+}
+setupGoogleSignIn();
+
+// If already logged in, skip straight to the right dashboard.
+(async () => {
+  try {
+    const { user } = await api("/api/auth/me");
+    redirectForRole(user.role);
+  } catch { /* not logged in, stay here */ }
+})();
+</script>
+</body>
+</html>

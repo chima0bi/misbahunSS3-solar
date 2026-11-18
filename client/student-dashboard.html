@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Dashboard — aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment</div>
+  <div class="user-info">
+    <span id="userName"></span>
+    <button class="btn-secondary" id="logoutBtn">Log Out</button>
+  </div>
+</div>
+
+<div class="container narrow">
+  <div id="content"></div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById("logoutBtn").addEventListener("click", logout);
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+let allTests = [];
+let selSubject = "";
+let selClass = "";
+const content = document.getElementById("content");
+
+(async () => {
+  const user = await requireUser("STUDENT");
+  if (!user) return;
+  document.getElementById("userName").textContent = user.fullName;
+  content.innerHTML = `<div class="card"><p>Loading…</p></div>`;
+  try {
+    const data = await api("/api/tests");
+    allTests = data.tests;
+    // Resume the last selection after coming back from a test/result page.
+    selSubject = sessionStorage.getItem("aib_subject") || "";
+    selClass = sessionStorage.getItem("aib_class") || "";
+    render();
+  } catch (err) {
+    content.innerHTML = `<div class="card error-banner">${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+function uniq(arr) {
+  return [...new Set(arr)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function render() {
+  const subjects = uniq(allTests.map((t) => t.subject));
+  if (!subjects.includes(selSubject)) selSubject = "";
+  const classes = uniq(allTests.filter((t) => t.subject === selSubject).map((t) => t.className));
+  if (!classes.includes(selClass)) selClass = "";
+  const matches = selSubject && selClass ? allTests.filter((t) => t.subject === selSubject && t.className === selClass) : [];
+
+  if (allTests.length === 0) {
+    content.innerHTML = `<div class="card"><h1>Take a Test</h1><div class="empty-state">No tests are available yet. Please check back later.</div></div>`;
+    return;
+  }
+
+  const opts = (list, cur, placeholder) =>
+    `<option value="">${placeholder}</option>` + list.map((v) => `<option value="${escapeHtml(v)}" ${v === cur ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
+
+  content.innerHTML = `
+    <div class="card">
+      <h1>Take a Test</h1>
+      <p class="sub">Choose your subject and class, then pick a test.</p>
+      <label for="subjectSel">Subject</label>
+      <select id="subjectSel">${opts(subjects, selSubject, "Select a subject…")}</select>
+      <label for="classSel">Class</label>
+      <select id="classSel" ${selSubject ? "" : "disabled"}>${opts(classes, selClass, selSubject ? "Select a class…" : "Select a subject first")}</select>
+    </div>
+    <div id="testList">${matches.map(testCard).join("")}</div>
+    ${selSubject && selClass && matches.length === 0 ? `<div class="card"><div class="empty-state">No tests for this subject and class yet.</div></div>` : ""}
+  `;
+
+  document.getElementById("subjectSel").addEventListener("change", (e) => {
+    selSubject = e.target.value; selClass = "";
+    sessionStorage.setItem("aib_subject", selSubject); sessionStorage.removeItem("aib_class");
+    render();
+  });
+  document.getElementById("classSel").addEventListener("change", (e) => {
+    selClass = e.target.value;
+    sessionStorage.setItem("aib_class", selClass);
+    render();
+  });
+
+  document.querySelectorAll("[data-start]").forEach((b) => b.addEventListener("click", () => begin(b, "/api/attempt/start", b.dataset.start)));
+  document.querySelectorAll("[data-retake]").forEach((b) => b.addEventListener("click", () => {
+    if (!confirm("Erase your previous score and retake this test? Questions and answer choices will be reshuffled. Your earlier attempt stays on record for your teacher.")) return;
+    begin(b, "/api/attempt/retake", b.dataset.retake);
+  }));
+}
+
+function windowNote(t) {
+  const w = t.window || {};
+  const f = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (w.state === "not_open") return `This test opens on <strong>${f(w.opensAt)}</strong>.`;
+  if (w.state === "closed") return `This test closed on <strong>${f(w.closesAt)}</strong>.`;
+  if (w.closesAt) return `Available until <strong>${f(w.closesAt)}</strong>. If you are still writing when it closes, your test is submitted automatically.`;
+  return "";
+}
+
+function testCard(t) {
+  let action = "";
+  const w = t.window || { state: "open" };
+  const locked = w.state !== "open";
+  if (t.attemptStatus === "NOT_STARTED" && locked) {
+    action = `<div class="info-banner">${windowNote(t)}</div>`;
+  } else if (t.attemptStatus === "NOT_STARTED") {
+    action = `
+      <div class="info-banner">Once you click <strong>Start Test</strong>, the countdown begins immediately and cannot be paused. Each attempt draws a freshly shuffled set of questions.</div>
+      ${windowNote(t) ? `<p class="hint">${windowNote(t)}</p>` : ""}
+      <button class="btn-primary btn-block" data-start="${t.id}">Start Test</button>`;
+  } else if (t.attemptStatus === "IN_PROGRESS") {
+    action = `
+      <div class="info-banner">You have this test in progress (attempt #${t.attemptNumber}). Continue where you left off.</div>
+      <a class="btn btn-primary btn-block" href="/test.html?testId=${encodeURIComponent(t.id)}">Continue Test</a>`;
+  } else if (t.lastScore) {
+    const l = t.lastScore;
+    action = `
+      <p class="sub">Attempt #${t.attemptNumber} score: <strong>${l.percentage}%</strong> (${l.correctCount} of ${l.totalQuestions} correct)</p>
+      <a class="btn btn-primary btn-block" href="/results.html?testId=${encodeURIComponent(t.id)}">View Your Result</a>
+      ${locked
+        ? `<p class="hint" style="margin-top:10px;">${windowNote(t)} Retakes are only possible while the test is open.</p>`
+        : `<button class="btn-secondary btn-block" style="margin-top:10px;" data-retake="${t.id}">Erase Score &amp; Retake Test</button>${windowNote(t) ? `<p class="hint">${windowNote(t)}</p>` : ""}`}`;
+  }
+  return `
+    <div class="card">
+      <h2 style="margin-top:0;">${escapeHtml(t.title)}</h2>
+      <p class="sub">${escapeHtml(t.subject)} · ${escapeHtml(t.className)} · ${t.questionCount} questions · ${Math.round(t.durationSeconds / 60)} minute time limit</p>
+      ${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}
+      ${action}
+    </div>`;
+}
+
+async function begin(btn, path, testId) {
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = "Starting…";
+  try {
+    await api(path, { method: "POST", body: { testId } });
+    window.location.href = `/test.html?testId=${encodeURIComponent(testId)}`;
+  } catch (err) {
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+</script>
+</body>
+</html>

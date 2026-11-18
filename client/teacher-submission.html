@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Submission Detail — aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment — Teacher</div>
+  <div class="user-info">
+    <span id="userName"></span>
+    <button class="btn-secondary" id="logoutBtn">Log Out</button>
+  </div>
+</div>
+
+<div class="container wide">
+  <p><a href="/teacher-dashboard.html">&larr; Back to all submissions</a></p>
+  <div id="content"><div class="card"><p>Loading submission…</p></div></div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById("logoutBtn").addEventListener("click", logout);
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+const attemptId = new URLSearchParams(window.location.search).get("id");
+let latestResult = null;
+
+(async () => {
+  const user = await requireUser("TEACHER");
+  if (!user) return;
+  document.getElementById("userName").textContent = user.fullName;
+
+  if (!attemptId) { window.location.href = "/teacher-dashboard.html"; return; }
+  await load();
+})();
+
+async function load() {
+  const content = document.getElementById("content");
+  try {
+    const r = await api(`/api/teacher/submissions/${attemptId}`);
+    latestResult = r;
+    render(r);
+  } catch (err) {
+    content.innerHTML = `<div class="card error-banner">${err.message}</div>`;
+  }
+}
+
+function render(r) {
+  const content = document.getElementById("content");
+  const a = r.attempt;
+  content.innerHTML = `
+    <div class="card score-hero">
+      <h1>${escapeHtml(r.student.fullName)}</h1>
+      <p class="sub">${escapeHtml(r.student.email)} · Attempt #${a.attemptNumber}<br>${escapeHtml(r.test.title)} · ${escapeHtml(r.test.subject)} · ${escapeHtml(r.test.className)}</p>
+      <div class="score-big">${a.percentage}%</div>
+      <div class="score-pct">${a.correctCount} of ${a.totalQuestions} correct</div>
+      <div class="stat-row">
+        <div class="stat-pill"><div class="num">${a.correctCount}</div><div class="label">Correct</div></div>
+        <div class="stat-pill"><div class="num">${a.partialCount || 0}</div><div class="label">Partial</div></div>
+        <div class="stat-pill"><div class="num">${a.incorrectCount}</div><div class="label">Incorrect</div></div>
+        <div class="stat-pill"><div class="num">${a.timeUsedSeconds !== null ? fmtDuration(a.timeUsedSeconds) : "—"}</div><div class="label">Time Used</div></div>
+        <div class="stat-pill"><div class="num">${a.submissionType === "AUTO" ? "Auto" : "Manual"}</div><div class="label">Submission</div></div>
+      </div>
+      <p class="sub" style="margin-top:14px;">Submitted ${fmtDate(a.submittedAt)}</p>
+    </div>
+
+    <h2 style="margin: 24px 0 12px;">Question-by-Question Review</h2>
+    <div id="reviewList"></div>
+  `;
+
+  const list = document.getElementById("reviewList");
+  list.innerHTML = "";
+  r.review.forEach((q) => {
+    const status = q.status || (q.isCorrect ? "correct" : "incorrect");
+    const badgeLabel = status === "correct" ? "✓ Correct" : status === "partial" ? "◐ Partial Credit" : "✗ Incorrect";
+    const item = document.createElement("div");
+    item.className = "review-item " + status;
+    item.innerHTML = `
+      <div class="qhead">
+        <span class="qnum">QUESTION ${q.order}</span>
+        <span>
+          <span class="badge ${status}">${badgeLabel}</span>
+          ${q.reviewRecommended ? `<span class="badge review">Flagged for review</span>` : ""}
+          ${q.teacherOverride ? `<span class="badge review">Overridden</span>` : ""}
+        </span>
+      </div>
+      <h3>${escapeHtml(q.question)}</h3>
+      <div class="answer-block">
+        <div class="lbl">Student's answer</div>
+        <div>${q.yourAnswer && q.yourAnswer.trim() !== "" ? escapeHtml(q.yourAnswer) : "(No answer given)"}</div>
+      </div>
+      ${q.correctAnswer ? `
+        <div class="answer-block" style="background:#e9f7ef;">
+          <div class="lbl">Correct answer</div>
+          <div>${escapeHtml(q.correctAnswer)}</div>
+        </div>
+      ` : ""}
+      ${q.modelAnswer ? `
+        <div class="answer-block" style="background:#e9f7ef;">
+          <div class="lbl">Model answer</div>
+          <div>${escapeHtml(q.modelAnswer)}</div>
+        </div>
+      ` : ""}
+      ${q.explanation ? `<div class="explain-block"><span class="lbl">Explanation</span>${escapeHtml(q.explanation)}</div>` : ""}
+      ${q.reasoning ? `<div class="explain-block"><span class="lbl">Reasoning</span>${escapeHtml(q.reasoning)}</div>` : ""}
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="font-size:12.5px; color:var(--text-muted);">${q.marksAwarded} / ${q.marks} marks</span>
+        <button class="btn-secondary" style="padding:6px 12px; font-size:12.5px;" data-override="${q.id}">Override Score</button>
+      </div>
+    `;
+    list.appendChild(item);
+  });
+
+  list.querySelectorAll("[data-override]").forEach((btn) => {
+    btn.addEventListener("click", () => openOverrideModal(btn.dataset.override));
+  });
+}
+
+function openOverrideModal(questionId) {
+  const q = latestResult.review.find((x) => x.id === questionId);
+  const backdrop = document.createElement("div");
+  backdrop.className = "modal-backdrop";
+  backdrop.innerHTML = `
+    <div class="modal">
+      <h2>Override Score</h2>
+      <p class="sub">Question ${q.order} · ${q.marks} marks max</p>
+      <label for="ovCorrect">Mark as</label>
+      <select id="ovCorrect">
+        <option value="true" ${q.isCorrect ? "selected" : ""}>Correct</option>
+        <option value="false" ${!q.isCorrect ? "selected" : ""}>Incorrect</option>
+      </select>
+      <label for="ovMarks">Marks awarded (0–${q.marks})</label>
+      <input type="text" id="ovMarks" value="${q.marksAwarded}">
+      <div class="actions">
+        <button class="btn-secondary" id="ovCancel">Cancel</button>
+        <button class="btn-primary" id="ovSave">Save Override</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  document.getElementById("ovCancel").addEventListener("click", () => backdrop.remove());
+  document.getElementById("ovSave").addEventListener("click", async () => {
+    const isCorrect = document.getElementById("ovCorrect").value === "true";
+    const marksAwarded = Number(document.getElementById("ovMarks").value);
+    const saveBtn = document.getElementById("ovSave");
+    saveBtn.disabled = true;
+    try {
+      await api(`/api/teacher/submissions/${attemptId}/override`, {
+        method: "POST",
+        body: { questionId, isCorrect, marksAwarded }
+      });
+      backdrop.remove();
+      await load();
+    } catch (err) {
+      alert(err.message);
+      saveBtn.disabled = false;
+    }
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "aib-assessment",
+  "version": "4.2.0",
+  "private": true,
+  "description": "aiB Assessment Platform - student testing + admin dashboard. Node.js built-ins plus the libSQL client (local SQLite file or hosted Turso).",
+  "main": "server/src/server.js",
+  "scripts": {
+    "start": "node server/src/server.js",
+    "dev": "node --watch server/src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0"
+  }
+}

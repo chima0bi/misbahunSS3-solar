@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Assessment in Progress — aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment</div>
+  <div class="user-info">
+    <span id="saveStatus" style="font-size:12.5px;"></span>
+    <span class="timer" id="timerBox">--:--</span>
+  </div>
+</div>
+
+<div class="container">
+  <div id="content"><div class="card"><p>Loading your test…</p></div></div>
+</div>
+
+<div id="modalRoot"></div>
+
+<script src="/js/api.js"></script>
+<script>
+const testId = new URLSearchParams(location.search).get("testId") || "";
+let attempt = null;
+let questions = [];
+let answers = {};
+let currentIndex = 0;
+let clockOffsetMs = 0; // serverNow - clientNow at load, for drift-resistant countdown
+let autoSubmitTriggered = false;
+let saveTimers = {};
+let allowLeave = false; // set before our own redirects so the browser doesn't show "Leave site?"
+function goTo(url) { allowLeave = true; window.location.href = url; }
+function goToResults() { goTo(`/results.html?testId=${encodeURIComponent(attempt ? attempt.testId : testId)}`); }
+
+const content = document.getElementById("content");
+const timerBox = document.getElementById("timerBox");
+const saveStatus = document.getElementById("saveStatus");
+
+async function init() {
+  const user = await requireUser("STUDENT");
+  if (!user) return;
+
+  try {
+    const data = await api(`/api/attempt/current?testId=${encodeURIComponent(testId)}`);
+    attempt = data.attempt;
+    questions = data.questions;
+    answers = data.answers || {};
+  } catch (err) {
+    if (err.status === 404) { goTo("/student-dashboard.html"); return; }
+    content.innerHTML = `<div class="card error-banner">${err.message}</div>`;
+    return;
+  }
+
+  if (attempt.status === "SUBMITTED") {
+    goToResults();
+    return;
+  }
+
+  clockOffsetMs = new Date(attempt.serverNow).getTime() - Date.now();
+  renderShell();
+  renderQuestion();
+  startTimer();
+  // Periodically resync with the server — this is what actually enforces the
+  // timer and catches auto-submission; the visible countdown is cosmetic only.
+  setInterval(resyncWithServer, 20000);
+}
+
+function getRemainingMs() {
+  const nowServerEstimate = Date.now() + clockOffsetMs;
+  return new Date(attempt.expiresAt).getTime() - nowServerEstimate;
+}
+
+function startTimer() {
+  updateTimerDisplay();
+  setInterval(() => {
+    const remaining = getRemainingMs();
+    updateTimerDisplay();
+    if (remaining <= 0 && !autoSubmitTriggered) {
+      autoSubmitTriggered = true;
+      handleAutoSubmit();
+    }
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  const remainingSec = Math.max(0, Math.floor(getRemainingMs() / 1000));
+  timerBox.textContent = fmtTime(remainingSec);
+  timerBox.className = "timer" + (remainingSec <= 300 ? " danger" : remainingSec <= 900 ? " warn" : "");
+}
+
+async function resyncWithServer() {
+  try {
+    const data = await api(`/api/attempt/current?testId=${encodeURIComponent(testId)}`);
+    attempt = data.attempt;
+    clockOffsetMs = new Date(attempt.serverNow).getTime() - Date.now();
+    if (attempt.status === "SUBMITTED" && !autoSubmitTriggered) {
+      autoSubmitTriggered = true;
+      goToResults();
+    }
+  } catch (err) {
+    if (err.status === 404) goTo("/student-dashboard.html");
+  }
+}
+
+async function handleAutoSubmit() {
+  showTimesUpOverlay();
+  try {
+    await api(`/api/attempt/${attempt.id}/submit`, { method: "POST" });
+  } catch { /* server will have auto-submitted via ensureNotExpired regardless */ }
+  setTimeout(goToResults, 1400);
+}
+
+function showTimesUpOverlay() {
+  document.getElementById("modalRoot").innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" style="text-align:center">
+        <h2>TIME'S UP</h2>
+        <p>Your test has been automatically submitted.</p>
+        <p class="sub">Calculating your result…</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderShell() {
+  content.innerHTML = `
+    <div class="card">
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="q-nav" id="qNav"></div>
+      <div class="q-topbar">
+        <span class="qnum-label" id="qLabel"></span>
+        <button class="btn-submit" id="submitBtn">Submit Test</button>
+      </div>
+      <div id="questionBody"></div>
+      <div class="q-bottombar">
+        <button class="btn-secondary" id="prevBtn">&larr; Previous</button>
+        <button class="btn-primary" id="nextBtn">Next &rarr;</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("prevBtn").addEventListener("click", () => { if (currentIndex > 0) { currentIndex--; renderQuestion(); } });
+  document.getElementById("nextBtn").addEventListener("click", () => { if (currentIndex < questions.length - 1) { currentIndex++; renderQuestion(); } });
+  document.getElementById("submitBtn").addEventListener("click", openSubmitModal);
+  renderNav();
+}
+
+function renderNav() {
+  const nav = document.getElementById("qNav");
+  nav.innerHTML = "";
+  questions.forEach((q, i) => {
+    const hasAnswer = answers[q.id] && String(answers[q.id]).trim() !== "";
+    const btn = el("button", {
+      class: (hasAnswer ? "answered " : "") + (i === currentIndex ? "current" : ""),
+      "aria-label": `Question ${i + 1}${hasAnswer ? ", answered" : ", not answered"}`,
+      onclick: () => { currentIndex = i; renderQuestion(); }
+    }, String(i + 1));
+    nav.appendChild(btn);
+  });
+  const answeredCount = questions.filter((q) => answers[q.id] && String(answers[q.id]).trim() !== "").length;
+  document.getElementById("progressFill").style.width = `${Math.round((answeredCount / questions.length) * 100)}%`;
+}
+
+function renderQuestion() {
+  const q = questions[currentIndex];
+  const body = document.getElementById("questionBody");
+  const existing = answers[q.id] || "";
+
+  let inputHtml = "";
+  if (q.type === "multiple-choice" || q.type === "true-false") {
+    inputHtml = q.options.map((opt, i) => `
+      <label class="option ${existing === opt ? "selected" : ""}" for="opt${i}">
+        <input type="radio" name="answer" id="opt${i}" value="${escapeHtml(opt)}" ${existing === opt ? "checked" : ""}>
+        <span>${escapeHtml(opt)}</span>
+      </label>
+    `).join("");
+  } else {
+    inputHtml = `<textarea id="shortAnswer" rows="4" placeholder="Type your answer…">${escapeHtml(existing)}</textarea>`;
+  }
+
+  document.getElementById("qLabel").textContent = `QUESTION ${currentIndex + 1} OF ${questions.length}`;
+
+  body.innerHTML = `
+    <h2>${escapeHtml(q.question)}</h2>
+    <div style="margin-top:14px;">${inputHtml}</div>
+  `;
+
+  if (q.type === "multiple-choice" || q.type === "true-false") {
+    body.querySelectorAll('input[name="answer"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        answers[q.id] = input.value;
+        body.querySelectorAll(".option").forEach((o) => o.classList.remove("selected"));
+        input.closest(".option").classList.add("selected");
+        saveAnswer(q.id, input.value);
+        renderNav();
+      });
+    });
+  } else {
+    const textarea = document.getElementById("shortAnswer");
+    textarea.addEventListener("input", () => {
+      answers[q.id] = textarea.value;
+      clearTimeout(saveTimers[q.id]);
+      saveTimers[q.id] = setTimeout(() => { saveAnswer(q.id, textarea.value); renderNav(); }, 600);
+    });
+  }
+
+  document.getElementById("prevBtn").disabled = currentIndex === 0;
+  document.getElementById("nextBtn").disabled = currentIndex === questions.length - 1;
+  renderNav();
+}
+
+async function saveAnswer(questionId, answerText) {
+  saveStatus.textContent = "Saving…";
+  try {
+    await api(`/api/attempt/${attempt.id}/answer`, { method: "POST", body: { questionId, answerText } });
+    saveStatus.textContent = "Saved";
+    setTimeout(() => { if (saveStatus.textContent === "Saved") saveStatus.textContent = ""; }, 1500);
+  } catch (err) {
+    if (err.status === 409) {
+      goToResults();
+      return;
+    }
+    saveStatus.textContent = "Save failed — retrying…";
+    setTimeout(() => saveAnswer(questionId, answerText), 2000);
+  }
+}
+
+function openSubmitModal() {
+  const answeredCount = questions.filter((q) => answers[q.id] && String(answers[q.id]).trim() !== "").length;
+  const unanswered = questions.length - answeredCount;
+  const allAnswered = unanswered === 0;
+
+  document.getElementById("modalRoot").innerHTML = `
+    <div class="modal-backdrop" id="submitBackdrop">
+      <div class="modal">
+        <h2>Submit Test?</h2>
+        ${allAnswered
+          ? `<p>You have answered all ${questions.length} questions.</p><p>Are you ready to submit?</p>`
+          : `<p>You have answered ${answeredCount} of ${questions.length} questions.</p><p>${unanswered} question${unanswered === 1 ? "" : "s"} unanswered.</p>`
+        }
+        <p class="sub">Once submitted, you cannot change your answers.</p>
+        <div class="actions">
+          <button class="btn-secondary" id="cancelSubmit">Go Back</button>
+          <button class="btn-primary" id="confirmSubmit">Submit Test</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById("cancelSubmit").addEventListener("click", () => { document.getElementById("modalRoot").innerHTML = ""; });
+  document.getElementById("confirmSubmit").addEventListener("click", doManualSubmit);
+}
+
+async function doManualSubmit() {
+  const btn = document.getElementById("confirmSubmit");
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await api(`/api/attempt/${attempt.id}/submit`, { method: "POST" });
+    goToResults();
+  } catch (err) {
+    if (err.status === 409 || (err.data && err.data.attempt)) {
+      goToResults();
+      return;
+    }
+    alert(err.message);
+    btn.disabled = false;
+    btn.textContent = "Submit Test";
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+window.addEventListener("beforeunload", (e) => {
+  if (!allowLeave && attempt && attempt.status === "IN_PROGRESS") {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+
+init();
+</script>
+</body>
+</html>

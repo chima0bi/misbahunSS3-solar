@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Result — aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment</div>
+  <div class="user-info">
+    <span id="userName"></span>
+    <button class="btn-secondary" id="logoutBtn">Log Out</button>
+  </div>
+</div>
+
+<div class="container wide">
+  <div id="content"><div class="card"><p>Loading your result…</p></div></div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById("logoutBtn").addEventListener("click", logout);
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+(async () => {
+  const user = await requireUser("STUDENT");
+  if (!user) return;
+  document.getElementById("userName").textContent = user.fullName;
+
+  const content = document.getElementById("content");
+  try {
+    const testId = new URLSearchParams(location.search).get("testId") || "";
+    const current = await api(`/api/attempt/current?testId=${encodeURIComponent(testId)}`);
+    if (current.attempt.status !== "SUBMITTED") {
+      window.location.href = `/test.html?testId=${encodeURIComponent(testId)}`;
+      return;
+    }
+    const result = await api(`/api/attempt/${current.attempt.id}/result`);
+    render(result);
+  } catch (err) {
+    if (err.status === 404) { window.location.href = "/student-dashboard.html"; return; }
+    content.innerHTML = `<div class="card error-banner">${err.message}</div>`;
+  }
+
+  function render(r) {
+    const a = r.attempt;
+    content.innerHTML = `
+      <div class="card score-hero">
+        <div style="font-size:13px; letter-spacing:0.05em; color:var(--text-muted); font-weight:700;">TEST COMPLETE${a.attemptNumber > 1 ? ` · ATTEMPT #${a.attemptNumber}` : ""}</div>
+        <h1 style="margin-top:8px;">${escapeHtml(r.student.fullName)}</h1>
+        <div class="sub" style="margin-top:4px;">${escapeHtml(r.test.title)} · ${escapeHtml(r.test.subject)} · ${escapeHtml(r.test.className)}</div>
+        <div class="score-big">${a.percentage}%</div>
+        <div class="score-pct">${a.correctCount} of ${a.totalQuestions} correct</div>
+        <div class="stat-row">
+          <div class="stat-pill"><div class="num">${a.correctCount}</div><div class="label">Correct</div></div>
+          <div class="stat-pill"><div class="num">${a.partialCount || 0}</div><div class="label">Partial</div></div>
+          <div class="stat-pill"><div class="num">${a.incorrectCount}</div><div class="label">Incorrect</div></div>
+          <div class="stat-pill"><div class="num">${a.timeUsedSeconds !== null ? fmtDuration(a.timeUsedSeconds) : "—"}</div><div class="label">Time Used</div></div>
+          <div class="stat-pill"><div class="num">${a.submissionType === "AUTO" ? "Auto" : "Manual"}</div><div class="label">Submission</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="text-align:center;">
+        <a class="btn btn-secondary" href="/student-dashboard.html">Back to Dashboard</a>
+      </div>
+
+      <h2 style="margin: 24px 0 12px;">Question-by-Question Review</h2>
+      <div id="reviewList"></div>
+    `;
+
+    const list = document.getElementById("reviewList");
+    r.review.forEach((q) => {
+      const status = q.status || (q.isCorrect ? "correct" : "incorrect");
+      const badgeLabel = status === "correct" ? "✓ Correct" : status === "partial" ? "◐ Partial Credit" : "✗ Incorrect";
+      const item = document.createElement("div");
+      item.className = "review-item " + status;
+      item.innerHTML = `
+        <div class="qhead">
+          <span class="qnum">QUESTION ${q.order}</span>
+          <span>
+            <span class="badge ${status}">${badgeLabel}</span>
+            ${q.teacherOverride ? `<span class="badge review">Teacher-reviewed</span>` : ""}
+          </span>
+        </div>
+        <h3>${escapeHtml(q.question)}</h3>
+        <div class="answer-block">
+          <div class="lbl">Your answer</div>
+          <div>${q.yourAnswer && q.yourAnswer.trim() !== "" ? escapeHtml(q.yourAnswer) : "(No answer given)"}</div>
+        </div>
+        ${status !== "correct" && q.correctAnswer ? `
+          <div class="answer-block" style="background:#e9f7ef;">
+            <div class="lbl">Correct answer</div>
+            <div>${escapeHtml(q.correctAnswer)}</div>
+          </div>
+        ` : ""}
+        ${status !== "correct" && q.modelAnswer ? `
+          <div class="answer-block" style="background:#e9f7ef;">
+            <div class="lbl">A model answer</div>
+            <div>${escapeHtml(q.modelAnswer)}</div>
+          </div>
+        ` : ""}
+        ${q.explanation ? `<div class="explain-block"><span class="lbl">Explanation</span> ${escapeHtml(q.explanation)}</div>` : ""}
+        ${q.reasoning ? `<div class="explain-block"><span class="lbl">Reasoning</span> ${escapeHtml(q.reasoning)}</div>` : ""}
+      `;
+      list.appendChild(item);
+    });
+  }
+})();
+</script>
+</body>
+</html>

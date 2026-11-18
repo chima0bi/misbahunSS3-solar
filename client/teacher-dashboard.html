@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard — aiB Assessment</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">aiB Assessment — Admin</div>
+  <div class="user-info">
+    <span id="userName"></span>
+    <button class="btn-secondary" id="logoutBtn">Log Out</button>
+  </div>
+</div>
+
+<div class="container wide">
+  <div class="tabs" role="tablist">
+    <button id="tabSubmissions" class="active" role="tab">Submissions &amp; Performance</button>
+    <button id="tabSettings" role="tab">Tests &amp; Question Bank</button>
+  </div>
+
+  <div id="paneSubmissions">
+    <div id="statsCard" class="card"><p>Loading class performance…</p></div>
+
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0;">Submissions</h2>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <select id="filterTest" style="width:auto; margin:0;"><option value="">All tests</option></select>
+          <input type="text" id="searchBox" placeholder="Search name or email…">
+          <a class="btn btn-secondary" href="/api/teacher/export.csv" id="exportBtn">Export CSV</a>
+        </div>
+      </div>
+      <div id="tableWrap"><p>Loading submissions…</p></div>
+    </div>
+  </div>
+
+  <div id="paneSettings" style="display:none;">
+    <div class="card">
+      <div class="toolbar">
+        <h2 style="margin:0;">Tests</h2>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn-primary" id="newTestBtn">+ New Test</button>
+          <button class="btn-secondary" id="deleteTestBtn">Delete Test</button>
+        </div>
+      </div>
+      <label for="testSelect">Select a test to edit</label>
+      <select id="testSelect"></select>
+      <div id="settingsMsg"></div>
+      <h3 id="testFormHeading" style="margin-top:18px;">Test Details</h3>
+      <div class="settings-grid">
+        <div>
+          <label for="settingTitle">Test Title</label>
+          <input type="text" id="settingTitle">
+        </div>
+        <div>
+          <label for="settingSubject">Subject</label>
+          <input type="text" id="settingSubject" placeholder="e.g. Mathematics">
+        </div>
+        <div>
+          <label for="settingClass">Class</label>
+          <input type="text" id="settingClass" placeholder="e.g. JSS 2">
+        </div>
+        <div>
+          <label for="settingDuration">Time Limit (minutes)</label>
+          <input type="text" id="settingDuration" inputmode="numeric">
+        </div>
+        <div>
+          <label for="settingCount">Number of Questions per Test</label>
+          <input type="text" id="settingCount" inputmode="numeric">
+        </div>
+      </div>
+      <h3 style="margin-top:18px;">Availability Window (optional)</h3>
+      <p class="hint">Leave both empty and students can write the test any time. If set, students can only start the test inside the window, and anyone still writing when it closes is submitted automatically.</p>
+      <div class="settings-grid">
+        <div>
+          <label for="settingOpens">Opens</label>
+          <input type="datetime-local" id="settingOpens">
+        </div>
+        <div>
+          <label for="settingCloses">Closes</label>
+          <input type="datetime-local" id="settingCloses">
+        </div>
+        <div style="align-self:end;">
+          <button type="button" class="btn-secondary" id="clearWindowBtn">Clear window</button>
+        </div>
+      </div>
+      <label for="settingDescription">Description (optional)</label>
+      <textarea id="settingDescription" rows="2"></textarea>
+      <label><input type="checkbox" id="settingActive" style="width:auto; margin-right:6px;" checked> Visible to students</label>
+      <p class="hint" id="bankCountHint"></p>
+      <button class="btn-primary" id="saveSettingsBtn">Save Test</button>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Teacher Sign-Up Code</h2>
+      <p class="hint">Anyone with this code can create a TEACHER account from the sign-up screen. Share it only with other teachers, and rotate it any time — changing it here takes effect immediately and does not require a restart.</p>
+      <div id="codeMsg"></div>
+      <label for="currentCodeDisplay">Current code</label>
+      <input type="text" id="currentCodeDisplay" readonly>
+      <label for="newCodeInput">Set a new code</label>
+      <input type="text" id="newCodeInput" placeholder="At least 6 characters" autocomplete="off">
+      <button class="btn-primary" id="saveCodeBtn" style="margin-top:10px;">Update Sign-Up Code</button>
+    </div>
+
+    <div class="card" id="bankCard">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="bankHeading">Questions</h2>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn-primary" id="bulkImportBtn">Import Questions (JSON)</button>
+        </div>
+      </div>
+      <p class="hint">Every test has its own questions. Each attempt draws up to the "Number of Questions per Test" set above from this test's active questions, shuffled fresh each time. Removed questions are hidden from future attempts but kept for past results.</p>
+      <div id="bankList"><p>Loading question bank…</p></div>
+    </div>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+
+<script src="/js/api.js"></script>
+<script>
+document.getElementById("logoutBtn").addEventListener("click", logout);
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+let searchTimer;
+let bankQuestions = [];
+let testsList = [];
+let currentTestId = "";
+let creatingNew = false;
+
+const tabSubmissions = document.getElementById("tabSubmissions");
+const tabSettings = document.getElementById("tabSettings");
+const paneSubmissions = document.getElementById("paneSubmissions");
+const paneSettings = document.getElementById("paneSettings");
+
+tabSubmissions.addEventListener("click", () => switchTab("submissions"));
+tabSettings.addEventListener("click", () => switchTab("settings"));
+
+function switchTab(which) {
+  const isSub = which === "submissions";
+  paneSubmissions.style.display = isSub ? "block" : "none";
+  paneSettings.style.display = isSub ? "none" : "block";
+  tabSubmissions.className = isSub ? "active" : "";
+  tabSettings.className = isSub ? "" : "active";
+  if (!isSub) { loadTests(); loadSignupCode(); }
+}
+
+(async () => {
+  const user = await requireUser("TEACHER");
+  if (!user) return;
+  document.getElementById("userName").textContent = user.fullName;
+
+  await populateTestFilter();
+  refreshSubmissionsPane();
+
+  document.getElementById("searchBox").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const val = e.target.value;
+    searchTimer = setTimeout(() => loadSubmissions(val), 250);
+  });
+  document.getElementById("filterTest").addEventListener("change", refreshSubmissionsPane);
+  document.getElementById("newTestBtn").addEventListener("click", startNewTest);
+  document.getElementById("clearWindowBtn").addEventListener("click", () => {
+    document.getElementById("settingOpens").value = "";
+    document.getElementById("settingCloses").value = "";
+  });
+  document.getElementById("deleteTestBtn").addEventListener("click", deleteCurrentTest);
+  document.getElementById("testSelect").addEventListener("change", (e) => { creatingNew = false; currentTestId = e.target.value; fillTestForm(); loadBank(); });
+
+  document.getElementById("saveSettingsBtn").addEventListener("click", saveSettings);
+  document.getElementById("bulkImportBtn").addEventListener("click", openBulkImportModal);
+  document.getElementById("saveCodeBtn").addEventListener("click", saveSignupCode);
+})();
+
+// ---- Teacher sign-up code ----
+
+async function loadSignupCode() {
+  try {
+    const { code } = await api("/api/teacher/signup-code");
+    document.getElementById("currentCodeDisplay").value = code || "(not set — teacher sign-up is disabled)";
+  } catch (err) {
+    document.getElementById("codeMsg").innerHTML = `<div class="error-banner">${err.message}</div>`;
+  }
+}
+
+async function saveSignupCode() {
+  const msg = document.getElementById("codeMsg");
+  const input = document.getElementById("newCodeInput");
+  const btn = document.getElementById("saveCodeBtn");
+  msg.innerHTML = "";
+  const code = input.value.trim();
+  if (code.length < 6) {
+    msg.innerHTML = `<div class="error-banner">Code must be at least 6 characters.</div>`;
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api("/api/teacher/signup-code", { method: "PATCH", body: { code } });
+    input.value = "";
+    msg.innerHTML = `<div class="info-banner">Sign-up code updated. New teacher accounts must now use this code.</div>`;
+    loadSignupCode();
+  } catch (err) {
+    msg.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadStats() {
+  const el = document.getElementById("statsCard");
+  try {
+    const s = await api(`/api/teacher/stats?testId=${encodeURIComponent(filterTestId())}`);
+    if (s.totalSubmissions === 0) {
+      el.innerHTML = `<h2>Class Performance</h2><div class="empty-state">No submissions yet.</div>`;
+      return;
+    }
+    const distOrder = ["90-100", "80-89", "70-79", "60-69", "below-60"];
+    const maxCount = Math.max(...distOrder.map((k) => s.distribution[k]), 1);
+
+    el.innerHTML = `
+      <h2>Class Performance</h2>
+      <div class="grid-stats">
+        <div class="stat-pill"><div class="num">${s.totalSubmissions}</div><div class="label">Submissions</div></div>
+        <div class="stat-pill"><div class="num">${s.average}%</div><div class="label">Average</div></div>
+        <div class="stat-pill"><div class="num">${s.highest}%</div><div class="label">Highest</div></div>
+        <div class="stat-pill"><div class="num">${s.lowest}%</div><div class="label">Lowest</div></div>
+      </div>
+      <div class="grid-stats" style="margin-top:4px;">
+        <div class="stat-pill"><div class="num">${fmtDuration(s.averageTimeSeconds)}</div><div class="label">Avg. Time Spent</div></div>
+        <div class="stat-pill"><div class="num">${fmtDuration(s.fastestTimeSeconds)}</div><div class="label">Fastest</div></div>
+        <div class="stat-pill"><div class="num">${fmtDuration(s.slowestTimeSeconds)}</div><div class="label">Slowest</div></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; margin-top:18px;">
+        <div>
+          <h3>Score Distribution</h3>
+          ${distOrder.map((k) => `
+            <div class="dist-bar-row">
+              <span class="label">${k === "below-60" ? "Below 60" : k}</span>
+              <span class="dist-bar-track"><span class="dist-bar-fill" style="width:${(s.distribution[k] / maxCount) * 100}%"></span></span>
+              <span class="count">${s.distribution[k]}</span>
+            </div>
+          `).join("")}
+        </div>
+        <div>
+          <h3>Most Missed Questions</h3>
+          ${s.mostMissed.length === 0 ? '<p class="sub">No data yet.</p>' : s.mostMissed.map((m) => `
+            <div class="missed-row">
+              <span>Q${m.order} — ${escapeHtml(m.question.slice(0, 46))}${m.question.length > 46 ? "…" : ""}</span>
+              <strong>${m.incorrectPercentage}%</strong>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+      
+    `;
+  } catch (err) {
+    el.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  }
+}
+
+async function loadSubmissions(search) {
+  const wrap = document.getElementById("tableWrap");
+  try {
+    const { submissions } = await api(`/api/teacher/submissions?search=${encodeURIComponent(search)}&testId=${encodeURIComponent(filterTestId())}`);
+    if (submissions.length === 0) {
+      wrap.innerHTML = `<div class="empty-state">No matching submissions.</div>`;
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>S/N</th><th>Student</th><th>Email</th><th>Subject</th><th>Class</th><th>Test</th><th>Attempt</th><th>Score</th><th>Correct</th><th>Time Used</th><th>Submitted</th><th>Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${submissions.map((s, index) => `
+              <tr data-id="${s.attemptId}">
+                <td>${escapeHtml(++index)}</td>
+                <td>${escapeHtml(s.fullName)}</td>
+                <td>${escapeHtml(s.email)}</td>
+                <td>${escapeHtml(s.subject)}</td>
+                <td>${escapeHtml(s.className)}</td>
+                <td>${escapeHtml(s.testTitle)}</td>
+                <td>#${s.attemptNumber}</td>
+                <td><strong>${s.percentage}%</strong></td>
+                <td>${s.correctCount}/${s.totalQuestions}</td>
+                <td>${s.timeUsedSeconds !== null ? fmtDuration(s.timeUsedSeconds) : "—"}</td>
+                <td>${fmtDate(s.submittedAt)}</td>
+                <td><span class="badge ${s.submissionType === "AUTO" ? "auto" : "manual"}">${s.submissionType}</span></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+    wrap.querySelectorAll("tr[data-id]").forEach((row) => {
+      row.addEventListener("click", () => {
+        window.location.href = `/teacher-submission.html?id=${row.dataset.id}`;
+      });
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  }
+}
+
+// ---- Submissions filter ----
+
+function filterTestId() { return document.getElementById("filterTest").value || ""; }
+
+async function populateTestFilter() {
+  try {
+    const { tests } = await api("/api/teacher/tests");
+    const sel = document.getElementById("filterTest");
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">All tests</option>` + tests.map((t) =>
+      `<option value="${t.id}">${escapeHtml(t.subject)} · ${escapeHtml(t.className)} — ${escapeHtml(t.title)}</option>`).join("");
+    sel.value = tests.some((t) => t.id === cur) ? cur : "";
+  } catch { /* non-fatal */ }
+}
+
+function refreshSubmissionsPane() {
+  document.getElementById("exportBtn").href = `/api/teacher/export.csv?testId=${encodeURIComponent(filterTestId())}`;
+  loadStats();
+  loadSubmissions(document.getElementById("searchBox").value);
+}
+
+// ---- Tests (create / edit / delete) ----
+
+async function loadTests(selectId) {
+  try {
+    const { tests } = await api("/api/teacher/tests");
+    testsList = tests;
+    if (selectId) { currentTestId = selectId; creatingNew = false; }
+    if (!creatingNew && !tests.some((t) => t.id === currentTestId)) currentTestId = tests.length ? tests[0].id : "";
+    if (tests.length === 0 && !creatingNew) creatingNew = true;
+    const sel = document.getElementById("testSelect");
+    sel.innerHTML = tests.map((t) =>
+      `<option value="${t.id}">${escapeHtml(t.subject)} · ${escapeHtml(t.className)} — ${escapeHtml(t.title)}${t.active ? "" : " (hidden)"}</option>`).join("");
+    if (!creatingNew) sel.value = currentTestId;
+    fillTestForm();
+    loadBank();
+    populateTestFilter();
+  } catch (err) {
+    document.getElementById("settingsMsg").innerHTML = `<div class="error-banner">${err.message}</div>`;
+  }
+}
+
+function fillTestForm() {
+  const t = creatingNew ? null : testsList.find((x) => x.id === currentTestId);
+  document.getElementById("testFormHeading").textContent = t ? "Test Details" : "New Test";
+  document.getElementById("settingTitle").value = t ? t.title : "";
+  document.getElementById("settingSubject").value = t ? t.subject : "";
+  document.getElementById("settingClass").value = t ? t.className : "";
+  document.getElementById("settingDescription").value = t ? t.description : "";
+  document.getElementById("settingDuration").value = t ? Math.round(t.durationSeconds / 60) : 30;
+  document.getElementById("settingCount").value = t ? t.questionsPerAttempt : 20;
+  document.getElementById("settingActive").checked = t ? t.active : true;
+  document.getElementById("settingOpens").value = t ? isoToLocalInput(t.opensAt) : "";
+  document.getElementById("settingCloses").value = t ? isoToLocalInput(t.closesAt) : "";
+  document.getElementById("saveSettingsBtn").textContent = t ? "Save Test" : "Create Test";
+  document.getElementById("deleteTestBtn").style.display = t ? "" : "none";
+  document.getElementById("bankCard").style.display = t ? "" : "none";
+  document.getElementById("bankCountHint").textContent = t
+    ? `${t.activeBankCount} active question(s) in this test. Students get up to ${t.questionsPerAttempt} per attempt.`
+    : "Fill in the details, then add questions after creating the test.";
+}
+
+// <input type="datetime-local"> works in the admin's local time; the server
+// stores UTC ISO strings.
+function isoToLocalInput(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localInputToIso(v) { return v ? new Date(v).toISOString() : null; }
+
+function startNewTest() {
+  creatingNew = true;
+  document.getElementById("settingsMsg").innerHTML = "";
+  fillTestForm();
+  document.getElementById("settingTitle").focus();
+}
+
+async function saveSettings() {
+  const btn = document.getElementById("saveSettingsBtn");
+  const msg = document.getElementById("settingsMsg");
+  msg.innerHTML = "";
+  btn.disabled = true;
+  const body = {
+    title: document.getElementById("settingTitle").value,
+    subject: document.getElementById("settingSubject").value,
+    className: document.getElementById("settingClass").value,
+    description: document.getElementById("settingDescription").value,
+    durationMinutes: Number(document.getElementById("settingDuration").value),
+    questionsPerAttempt: Number(document.getElementById("settingCount").value),
+    active: document.getElementById("settingActive").checked,
+    opensAt: localInputToIso(document.getElementById("settingOpens").value),
+    closesAt: localInputToIso(document.getElementById("settingCloses").value)
+  };
+  try {
+    if (creatingNew) {
+      const { test } = await api("/api/teacher/tests", { method: "POST", body });
+      msg.innerHTML = `<div class="info-banner">Test created. Now add its questions below.</div>`;
+      await loadTests(test.id);
+    } else {
+      await api(`/api/teacher/tests/${currentTestId}`, { method: "PATCH", body });
+      msg.innerHTML = `<div class="info-banner">Test saved. Changes apply to attempts started from now on.</div>`;
+      await loadTests(currentTestId);
+    }
+  } catch (err) {
+    msg.innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteCurrentTest() {
+  const t = testsList.find((x) => x.id === currentTestId);
+  if (!t) return;
+  if (!confirm(`Permanently delete "${t.title}" (${t.subject} · ${t.className})?\n\nThis removes all of its questions, answers and explanations, and every student attempt and score on it. This cannot be undone.`)) return;
+  try {
+    await api(`/api/teacher/tests/${t.id}`, { method: "DELETE" });
+    currentTestId = "";
+    document.getElementById("settingsMsg").innerHTML = `<div class="info-banner">Test deleted.</div>`;
+    await loadTests();
+    refreshSubmissionsPane();
+  } catch (err) {
+    document.getElementById("settingsMsg").innerHTML = `<div class="error-banner">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ---- Question bank ----
+
+async function loadBank() {
+  const wrap = document.getElementById("bankList");
+  try {
+    if (!currentTestId) { wrap.innerHTML = ""; return; }
+    const { questions } = await api(`/api/teacher/tests/${currentTestId}/questions`);
+    bankQuestions = questions;
+    if (questions.length === 0) {
+      wrap.innerHTML = `<div class="empty-state">No questions yet. Use Import Questions (JSON) to add some.</div>`;
+      return;
+    }
+    wrap.innerHTML = questions.map((q) => `
+      <div class="qbank-row ${q.active ? "" : "inactive"}" data-id="${q.id}">
+        <div class="qmeta">
+          <span class="pill">${q.type}</span>
+          <span class="pill">${q.marks} marks</span>
+          ${!q.active ? `<span class="pill">Inactive</span>` : ""}
+          ${q.reviewRecommended ? `<span class="pill">Flag for review</span>` : ""}
+        </div>
+        <div>${escapeHtml(q.question)}</div>
+        <div class="qactions">
+          <button class="btn-secondary editBtn">Edit</button>
+          <button class="btn-secondary toggleBtn">${q.active ? "Deactivate" : "Reactivate"}</button>
+        </div>
+      </div>
+    `).join("");
+
+    wrap.querySelectorAll(".qbank-row").forEach((row) => {
+      const id = row.dataset.id;
+      const q = questions.find((x) => x.id === id);
+      row.querySelector(".editBtn").addEventListener("click", () => openQuestionModal(q));
+      row.querySelector(".toggleBtn").addEventListener("click", () => toggleActive(q));
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  }
+}
+
+async function toggleActive(q) {
+  try {
+    await api(`/api/teacher/questions/${q.id}`, { method: "PUT", body: { active: !q.active } });
+    loadBank();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Add mode supports stacking any number of question blocks in one modal (via
+// "+ Add Another Question") and saving them all in one go through the bulk
+// endpoint; Edit mode always shows exactly one block (no add/remove control)
+// and saves through the single-question endpoint.
+function openQuestionModal(question) {
+  const isEdit = !!question;
+  document.getElementById("modalRoot").innerHTML = `
+    <div class="modal-backdrop" id="qBackdrop">
+      <div class="modal modal-lg">
+        <h2>${isEdit ? "Edit Question" : "Add Question(s)"}</h2>
+        <div id="qModalError"></div>
+        <div class="modal-scroll-body" id="qBlocksWrap"></div>
+        ${isEdit ? "" : `<button type="button" class="btn-secondary" id="addAnotherBtn" style="margin-top:12px;">+ Add Another Question</button>`}
+        <div class="actions">
+          <button class="btn-secondary" id="qCancel">Cancel</button>
+          <button class="btn-primary" id="qSave">${isEdit ? "Save Changes" : "Save All"}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.style.overflow = "hidden";
+  document.getElementById("qCancel").addEventListener("click", closeQuestionModal);
+
+  if (isEdit) {
+    addQuestionBlock(question, true);
+    document.getElementById("qSave").addEventListener("click", () => saveEditQuestion(question));
+  } else {
+    addQuestionBlock(null, false);
+    document.getElementById("addAnotherBtn").addEventListener("click", () => addQuestionBlock(null, false));
+    document.getElementById("qSave").addEventListener("click", saveAllNewQuestions);
+  }
+}
+
+function closeQuestionModal() {
+  document.getElementById("modalRoot").innerHTML = "";
+  document.body.style.overflow = "";
+}
+
+function addQuestionBlock(question, isEditSingle) {
+  const wrap = document.getElementById("qBlocksWrap");
+  const type = question ? question.type : "multiple-choice";
+  const div = document.createElement("div");
+  div.className = "qmulti-item";
+  div.innerHTML = `
+    <div class="qmulti-head">
+      <strong>${isEditSingle ? "Question" : `Question #<span class="qmulti-num"></span>`}</strong>
+      ${isEditSingle ? "" : `<button type="button" class="btn-secondary qmulti-remove">Remove</button>`}
+    </div>
+    <label>Type</label>
+    <select class="f-type">
+      <option value="multiple-choice">Multiple Choice</option>
+      <option value="true-false">True / False</option>
+      <option value="short-answer">Short Answer (partial credit)</option>
+    </select>
+    <label>Question</label>
+    <textarea class="f-text" rows="2">${escapeHtml(question ? question.question : "")}</textarea>
+    <div class="f-options-wrap"></div>
+    <label>Explanation (optional, shown to students after submission)</label>
+    <textarea class="f-explanation" rows="2">${escapeHtml(question ? question.explanation : "")}</textarea>
+    <label>Reasoning (optional)</label>
+    <textarea class="f-reasoning" rows="2">${escapeHtml(question ? question.reasoning : "")}</textarea>
+    <label>Marks (default 1; the final score is always shown as a percentage)</label>
+    <input type="text" class="f-marks" inputmode="numeric" value="${question ? question.marks : 1}">
+    <label><input type="checkbox" class="f-review" style="width:auto; margin-right:6px;" ${question && question.reviewRecommended ? "checked" : ""}> Flag for teacher review</label>
+  `;
+  wrap.appendChild(div);
+
+  const typeSelect = div.querySelector(".f-type");
+  typeSelect.value = type;
+  renderBlockOptions(div, type, question);
+  typeSelect.addEventListener("change", () => renderBlockOptions(div, typeSelect.value, null));
+
+  const removeBtn = div.querySelector(".qmulti-remove");
+  if (removeBtn) removeBtn.addEventListener("click", () => { div.remove(); renumberBlocks(); });
+
+  renumberBlocks();
+}
+
+function renumberBlocks() {
+  const items = document.querySelectorAll("#qBlocksWrap .qmulti-item");
+  items.forEach((el, i) => {
+    const numSpan = el.querySelector(".qmulti-num");
+    if (numSpan) numSpan.textContent = i + 1;
+    const removeBtn = el.querySelector(".qmulti-remove");
+    if (removeBtn) removeBtn.style.display = items.length > 1 ? "" : "none";
+  });
+}
+
+function renderBlockOptions(block, t, question) {
+  const wrap = block.querySelector(".f-options-wrap");
+  if (t === "true-false") {
+    wrap.innerHTML = `
+      <label>Correct Answer</label>
+      <select class="f-correct-tf">
+        <option value="True">True</option>
+        <option value="False">False</option>
+      </select>
+    `;
+    if (question && question.type === "true-false" && question.correctAnswer) {
+      wrap.querySelector(".f-correct-tf").value = question.correctAnswer;
+    }
+  } else if (t === "multiple-choice") {
+    const opts = question && question.type === "multiple-choice" && question.options ? question.options : ["", "", "", ""];
+    wrap.innerHTML = `
+      <label>Options (fill at least 2)</label>
+      ${opts.map((o, i) => `<input type="text" class="f-mc-option" placeholder="Option ${i + 1}" value="${escapeHtml(o)}" style="margin-bottom:6px;">`).join("")}
+      <label>Correct Answer (must exactly match one option above)</label>
+      <input type="text" class="f-correct-mc" value="${escapeHtml(question && question.type === "multiple-choice" ? question.correctAnswer || "" : "")}">
+    `;
+  } else {
+    const fragments = question && question.type === "short-answer" && question.acceptedFragments ? question.acceptedFragments.join(", ") : "";
+    const modelAnswer = question && question.type === "short-answer" ? question.modelAnswer || "" : "";
+    wrap.innerHTML = `
+      <label>Model Answer (used for partial-credit comparison)</label>
+      <textarea class="f-model-answer" rows="2">${escapeHtml(modelAnswer)}</textarea>
+      <label>Accepted keywords / key ideas (comma-separated)</label>
+      <input type="text" class="f-fragments" value="${escapeHtml(fragments)}">
+      <p class="hint">Students who cover these ideas — even with different wording — earn partial or full credit automatically.</p>
+    `;
+  }
+}
+
+function readBlockAsPayload(block) {
+  const type = block.querySelector(".f-type").value;
+  const body = {
+    type,
+    question: block.querySelector(".f-text").value,
+    explanation: block.querySelector(".f-explanation").value,
+    reasoning: block.querySelector(".f-reasoning").value,
+    marks: Number(block.querySelector(".f-marks").value),
+    reviewRecommended: block.querySelector(".f-review").checked
+  };
+  if (type === "true-false") {
+    body.correctAnswer = block.querySelector(".f-correct-tf").value;
+  } else if (type === "multiple-choice") {
+    body.options = Array.from(block.querySelectorAll(".f-mc-option")).map((i) => i.value).filter((v) => v.trim());
+    body.correctAnswer = block.querySelector(".f-correct-mc").value;
+  } else {
+    body.modelAnswer = block.querySelector(".f-model-answer").value;
+    body.acceptedFragments = block.querySelector(".f-fragments").value.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return body;
+}
+
+async function saveEditQuestion(existing) {
+  const errBox = document.getElementById("qModalError");
+  errBox.innerHTML = "";
+  const block = document.querySelector("#qBlocksWrap .qmulti-item");
+  const body = readBlockAsPayload(block);
+  const saveBtn = document.getElementById("qSave");
+  saveBtn.disabled = true;
+  try {
+    await api(`/api/teacher/questions/${existing.id}`, { method: "PUT", body });
+    closeQuestionModal();
+    loadBank();
+    loadTests();
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
+    saveBtn.disabled = false;
+  }
+}
+
+// Saves every block in one call to the bulk endpoint. If some blocks fail
+// validation, the valid ones are still saved — the failed blocks stay in the
+// modal (with their error shown) so the teacher only has to fix those, not
+// re-enter everything.
+async function saveAllNewQuestions() {
+  const errBox = document.getElementById("qModalError");
+  errBox.innerHTML = "";
+  const blocks = Array.from(document.querySelectorAll("#qBlocksWrap .qmulti-item"));
+  const payload = blocks.map(readBlockAsPayload);
+  const saveBtn = document.getElementById("qSave");
+  saveBtn.disabled = true;
+  try {
+    const result = await api(`/api/teacher/tests/${currentTestId}/questions/bulk`, { method: "POST", body: { questions: payload } });
+    if (result.errorCount === 0) {
+      closeQuestionModal();
+      loadBank();
+      loadTests();
+      return;
+    }
+    const failedIndexes = new Set(result.errors.map((e) => e.index));
+    blocks.forEach((block, i) => { if (!failedIndexes.has(i)) block.remove(); });
+    renumberBlocks();
+    const errorText = result.errors.map((e) => `Question ${e.index + 1}: ${escapeHtml(e.error)}`).join("<br>");
+    errBox.innerHTML = `<div class="error-banner">${result.addedCount} question(s) saved. ${result.errorCount} need fixing before they can be saved:<br>${errorText}</div>`;
+    loadBank();
+    loadTests();
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+// ---- Bulk import (paste JSON) ----
+
+const BULK_SAMPLE = `[
+  {
+    "type": "multiple-choice",
+    "question": "What does HTML stand for?",
+    "options": ["Hyper Transfer Markup Language", "HyperText Markup Language", "Home Tool Markup Language"],
+    "correctAnswer": "HyperText Markup Language",
+    "explanation": "Optional.",
+    "marks": 1
+  },
+  {
+    "type": "true-false",
+    "question": "0 is an even number.",
+    "options": ["True", "False"],
+    "correctAnswer": "True"
+  },
+  {
+    "type": "short-answer",
+    "question": "What is a variable?",
+    "correctAnswer": ["named storage", "holds a value", "stores data"],
+    "modelAnswer": "A named place in memory that stores a value."
+  }
+]`;
+
+function openBulkImportModal() {
+  document.getElementById("modalRoot").innerHTML = `
+    <div class="modal-backdrop" id="biBackdrop">
+      <div class="modal modal-lg">
+        <h2>Import Questions (JSON)</h2>
+        <p class="hint">
+          Drag and drop a <code>.json</code> file onto the box, or paste the JSON into the text area. It must be an array of
+          question objects (up to 300 at a time) and they are added to the selected test. Each item needs
+          <code>type</code> ("multiple-choice", "true-false" or "short-answer") and <code>question</code>.
+          Multiple-choice/true-false also need <code>options</code> and <code>correctAnswer</code> (matching one option exactly).
+          Short-answer needs <code>correctAnswer</code> as an array of accepted keywords/phrases.
+          Optional: <code>modelAnswer</code>, <code>explanation</code>, <code>reasoning</code>, <code>marks</code> (default 1).
+        </p>
+        <div id="biError"></div>
+        <div class="dropzone" id="biDrop">Drag &amp; drop a <strong>.json</strong> file here</div>
+        <textarea id="biTextarea" rows="12" class="bulk-textarea" spellcheck="false" placeholder="…or paste your JSON here"></textarea>
+        <details style="margin-top:8px;">
+          <summary class="hint" style="cursor:pointer;">Show example format</summary>
+          <pre class="bulk-textarea" style="min-height:0; overflow:auto;">${escapeHtml(BULK_SAMPLE)}</pre>
+        </details>
+        <div class="actions">
+          <button class="btn-secondary" id="biCancel">Cancel</button>
+          <button class="btn-primary" id="biImportBtn">Import</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.style.overflow = "hidden";
+  document.getElementById("biCancel").addEventListener("click", closeBulkImportModal);
+  document.getElementById("biImportBtn").addEventListener("click", runBulkImport);
+
+  const backdrop = document.getElementById("biBackdrop");
+  const drop = document.getElementById("biDrop");
+  const textarea = document.getElementById("biTextarea");
+  // Without this, dropping a file slightly outside the box makes the browser
+  // navigate away to the file.
+  ["dragover", "drop"].forEach((ev) => backdrop.addEventListener(ev, (e) => e.preventDefault()));
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.add("over")));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", (e) => loadDroppedJson(e.dataTransfer.files));
+  textarea.addEventListener("drop", (e) => { e.preventDefault(); loadDroppedJson(e.dataTransfer.files); });
+}
+
+async function loadDroppedJson(files) {
+  const errBox = document.getElementById("biError");
+  errBox.innerHTML = "";
+  const file = files && files[0];
+  if (!file) return;
+  if (!/\.json$/i.test(file.name) && file.type !== "application/json") {
+    errBox.innerHTML = `<div class="error-banner">"${escapeHtml(file.name)}" is not a .json file.</div>`;
+    return;
+  }
+  try {
+    const text = (await file.text()).replace(/^\uFEFF/, "");
+    document.getElementById("biTextarea").value = text;
+    errBox.innerHTML = `<div class="info-banner">Loaded ${escapeHtml(file.name)}. Check it below, then click Import.</div>`;
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-banner">Couldn't read that file: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeBulkImportModal() {
+  document.getElementById("modalRoot").innerHTML = "";
+  document.body.style.overflow = "";
+}
+
+async function runBulkImport() {
+  const errBox = document.getElementById("biError");
+  errBox.innerHTML = "";
+  let parsed;
+  try {
+    parsed = JSON.parse(document.getElementById("biTextarea").value.replace(/^\uFEFF/, ""));
+    // Also accept { "questions": [ ... ] }
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.questions)) parsed = parsed.questions;
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-banner">That isn't valid JSON (${escapeHtml(err.message)}). Keys and string values need double quotes, and the whole paste must be a single array in square brackets.</div>`;
+    return;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    errBox.innerHTML = `<div class="error-banner">Expected a non-empty JSON array of question objects.</div>`;
+    return;
+  }
+
+  const btn = document.getElementById("biImportBtn");
+  btn.disabled = true;
+  try {
+    const result = await api(`/api/teacher/tests/${currentTestId}/questions/bulk`, { method: "POST", body: { questions: parsed } });
+    if (result.errorCount === 0) {
+      closeBulkImportModal();
+      loadBank();
+      loadTests();
+      return;
+    }
+    const errorText = result.errors.map((e) => `#${e.index + 1} (${escapeHtml(e.question)}): ${escapeHtml(e.error)}`).join("<br>");
+    errBox.innerHTML = `<div class="info-banner">${result.addedCount} question(s) imported.</div><div class="error-banner">${result.errorCount} item(s) failed:<br>${errorText}</div>`;
+    loadBank();
+    loadTests();
+  } catch (err) {
+    errBox.innerHTML = `<div class="error-banner">${err.message}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

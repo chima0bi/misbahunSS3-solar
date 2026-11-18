@@ -41,8 +41,13 @@ async function createSession(userId) {
   return { token, expiresAt: expires };
 }
 
+// Short-lived in-memory cache so every API call doesn't re-query session + user.
+const userCache = new Map();
+const USER_CACHE_MS = 15000;
+
 async function destroySession(token) {
   if (!token) return;
+  userCache.delete(token);
   await db.prepare(`DELETE FROM sessions WHERE token = ?`).run(token);
 }
 
@@ -50,6 +55,8 @@ async function getUserFromRequest(req) {
   const cookies = parseCookies(req);
   const token = cookies["session"];
   if (!token) return null;
+  const hit = userCache.get(token);
+  if (hit && hit.until > Date.now()) return hit.user;
   const session = await db.prepare(`SELECT * FROM sessions WHERE token = ?`).get(token);
   if (!session) return null;
   if (new Date(session.expires_at).getTime() < Date.now()) {
@@ -57,6 +64,10 @@ async function getUserFromRequest(req) {
     return null;
   }
   const user = await db.prepare(`SELECT id, full_name, email, role FROM users WHERE id = ?`).get(session.user_id);
+  if (user) {
+    if (userCache.size > 500) userCache.clear();
+    userCache.set(token, { user, until: Date.now() + USER_CACHE_MS });
+  }
   return user || null;
 }
 

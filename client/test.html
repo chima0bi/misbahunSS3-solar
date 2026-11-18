@@ -22,6 +22,7 @@
 <div id="modalRoot"></div>
 
 <script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
 <script>
 const testId = new URLSearchParams(location.search).get("testId") || "";
 let attempt = null;
@@ -31,6 +32,8 @@ let currentIndex = 0;
 let clockOffsetMs = 0; // serverNow - clientNow at load, for drift-resistant countdown
 let autoSubmitTriggered = false;
 let saveTimers = {};
+let toasted = null; // null until first render so resumed tests do not re-celebrate
+let fiveWarned = false;
 let allowLeave = false; // set before our own redirects so the browser doesn't show "Leave site?"
 function goTo(url) { allowLeave = true; window.location.href = url; }
 function goToResults() { goTo(`/results.html?testId=${encodeURIComponent(attempt ? attempt.testId : testId)}`); }
@@ -88,6 +91,7 @@ function startTimer() {
 function updateTimerDisplay() {
   const remainingSec = Math.max(0, Math.floor(getRemainingMs() / 1000));
   timerBox.textContent = fmtTime(remainingSec);
+  if (remainingSec <= 300 && remainingSec > 0 && !fiveWarned) { fiveWarned = true; UI.toast("5 minutes left. Stay steady, you're doing fine ⏳"); }
   timerBox.className = "timer" + (remainingSec <= 300 ? " danger" : remainingSec <= 900 ? " warn" : "");
 }
 
@@ -142,7 +146,7 @@ function renderShell() {
     </div>
   `;
   document.getElementById("prevBtn").addEventListener("click", () => { if (currentIndex > 0) { currentIndex--; renderQuestion(); } });
-  document.getElementById("nextBtn").addEventListener("click", () => { if (currentIndex < questions.length - 1) { currentIndex++; renderQuestion(); } });
+  document.getElementById("nextBtn").addEventListener("click", () => { if (currentIndex < questions.length - 1) { currentIndex++; renderQuestion(); } else openSubmitModal(); });
   document.getElementById("submitBtn").addEventListener("click", openSubmitModal);
   renderNav();
 }
@@ -160,7 +164,15 @@ function renderNav() {
     nav.appendChild(btn);
   });
   const answeredCount = questions.filter((q) => answers[q.id] && String(answers[q.id]).trim() !== "").length;
+  document.getElementById("submitBtn").classList.toggle("ready", answeredCount === questions.length);
   document.getElementById("progressFill").style.width = `${Math.round((answeredCount / questions.length) * 100)}%`;
+  const cur = nav.children[currentIndex]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+  const half = Math.ceil(questions.length / 2);
+  if (toasted === null) toasted = { half: answeredCount >= half, all: answeredCount === questions.length };
+  else {
+    if (!toasted.half && questions.length > 3 && answeredCount >= half) { toasted.half = true; UI.toast("Halfway there! Keep that momentum 🎉"); }
+    if (!toasted.all && answeredCount === questions.length) { toasted.all = true; UI.toast("All answered. Review if you like, then submit ✅"); UI.confetti(50); }
+  }
 }
 
 function renderQuestion() {
@@ -172,7 +184,7 @@ function renderQuestion() {
   if (q.type === "multiple-choice" || q.type === "true-false") {
     inputHtml = q.options.map((opt, i) => `
       <label class="option ${existing === opt ? "selected" : ""}" for="opt${i}">
-        <input type="radio" name="answer" id="opt${i}" value="${escapeHtml(opt)}" ${existing === opt ? "checked" : ""}>
+        <span class="key">${"ABCDEF"[i]||i+1}</span><input type="radio" name="answer" id="opt${i}" value="${escapeHtml(opt)}" ${existing === opt ? "checked" : ""}>
         <span>${escapeHtml(opt)}</span>
       </label>
     `).join("");
@@ -195,6 +207,7 @@ function renderQuestion() {
         input.closest(".option").classList.add("selected");
         saveAnswer(q.id, input.value);
         renderNav();
+        document.getElementById("nextBtn").classList.add("nudge");
       });
     });
   } else {
@@ -207,7 +220,9 @@ function renderQuestion() {
   }
 
   document.getElementById("prevBtn").disabled = currentIndex === 0;
-  document.getElementById("nextBtn").disabled = currentIndex === questions.length - 1;
+  const nb = document.getElementById("nextBtn"), last = currentIndex === questions.length - 1;
+  nb.innerHTML = last ? "Review &amp; Submit ✓" : "Next &rarr;";
+  nb.className = last ? "btn-finish" : "btn-primary" + (existing ? " nudge" : "");
   renderNav();
 }
 
@@ -250,6 +265,14 @@ function openSubmitModal() {
   `;
   document.getElementById("cancelSubmit").addEventListener("click", () => { document.getElementById("modalRoot").innerHTML = ""; });
   document.getElementById("confirmSubmit").addEventListener("click", doManualSubmit);
+  if (!allAnswered) {
+    const box = document.createElement("div"); box.className = "chips"; box.style.margin = "4px 0 8px";
+    questions.forEach((q, i) => { if (answers[q.id] && String(answers[q.id]).trim()) return;
+      const b = document.createElement("button"); b.className = "chip"; b.textContent = "Q" + (i + 1);
+      b.addEventListener("click", () => { currentIndex = i; document.getElementById("modalRoot").innerHTML = ""; renderQuestion(); });
+      box.appendChild(b); });
+    document.querySelector("#submitBackdrop .modal .sub").before(box);
+  }
 }
 
 async function doManualSubmit() {
@@ -281,6 +304,19 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 
+document.addEventListener("keydown", (e) => {
+  if (!questions.length || /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName) && document.activeElement.type !== "radio") return;
+  if (document.getElementById("modalRoot").children.length) return;
+  const q = questions[currentIndex];
+  if (e.key === "ArrowRight" && currentIndex < questions.length - 1) { currentIndex++; renderQuestion(); }
+  else if (e.key === "ArrowLeft" && currentIndex > 0) { currentIndex--; renderQuestion(); }
+  else if (e.key === "Enter" && document.activeElement.tagName !== "BUTTON") document.getElementById("nextBtn").click();
+  else if (q.options) {
+    const i = "abcdef".indexOf(e.key.toLowerCase()) >= 0 ? "abcdef".indexOf(e.key.toLowerCase()) : Number(e.key) - 1;
+    const opt = document.querySelectorAll('input[name="answer"]')[i];
+    if (opt) { opt.checked = true; opt.dispatchEvent(new Event("change")); }
+  }
+});
 init();
 </script>
 </body>

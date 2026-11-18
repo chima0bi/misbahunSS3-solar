@@ -197,6 +197,9 @@ async function migrate() {
   await addCol("questions", c, "active", "active INTEGER NOT NULL DEFAULT 1");
   await addCol("questions", c, "model_answer", "model_answer TEXT");
 
+  // Theory/short-answer questions are no longer supported: retire any legacy ones.
+  await db.prepare("UPDATE questions SET active = 0 WHERE type = 'short-answer'").run();
+
   c = await colsOf("answers");
   await addCol("answers", c, "grading_method", "grading_method TEXT");
 

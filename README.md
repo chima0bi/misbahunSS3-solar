@@ -1,4 +1,6 @@
-# aiB Assessment Platform (v4.2.0)
+# aiB Assessment Platform (v5.0)
+
+> **v5.0**: the platform is now **multiple-choice only** (true/false allowed). The AI grader, `ANTHROPIC_API_KEY` and all theory/short-answer features were removed; grading is exact-match and offline. Any old short-answer questions are deactivated automatically. The UI was redesigned. Older sections below that mention short-answer or AI grading no longer apply.
 
 > **v4.2.0**: the database layer now uses **libSQL** (`@libsql/client`). With no configuration it still uses a local SQLite file exactly as before; set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` and all data lives in **Turso** (free hosted SQLite), so the app can run on a host with a wiped filesystem such as Render's free plan without losing data. This version also adds a `/healthz` endpoint (for UptimeRobot), makes JSON paste / drag-and-drop the way to add questions, and removes the "Leave site?" prompt after submitting. See "Free hosting: Turso + Render + UptimeRobot" below.
 

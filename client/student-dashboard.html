@@ -15,11 +15,12 @@
   </div>
 </div>
 
-<div class="container narrow">
+<div class="container" style="max-width:600px">
   <div id="content"></div>
 </div>
 
 <script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
 <script>
 document.getElementById("logoutBtn").addEventListener("click", logout);
 
@@ -30,17 +31,25 @@ function escapeHtml(str) {
 let allTests = [];
 let selSubject = "";
 let selClass = "";
+let firstName = "";
 const content = document.getElementById("content");
+const LUCK = [
+  "Good luck! Breathe, read carefully, and trust what you've learned. 🍀",
+  "You've got this. One question at a time. 🌟",
+  "Stay calm and take your time. Your best is enough. 💪",
+  "Good luck! A clear mind beats a rushed one. ✨"
+];
+const luck = LUCK[Math.floor(Math.random() * LUCK.length)];
 
 (async () => {
   const user = await requireUser("STUDENT");
   if (!user) return;
   document.getElementById("userName").textContent = user.fullName;
-  content.innerHTML = `<div class="card"><p>Loading…</p></div>`;
+  firstName = user.fullName.split(" ")[0];
+  content.innerHTML = `<div class="card"><p class="sub">Loading your tests…</p></div>`;
   try {
     const data = await api("/api/tests");
     allTests = data.tests;
-    // Resume the last selection after coming back from a test/result page.
     selSubject = sessionStorage.getItem("aib_subject") || "";
     selClass = sessionStorage.getItem("aib_class") || "";
     render();
@@ -52,46 +61,46 @@ const content = document.getElementById("content");
 function uniq(arr) {
   return [...new Set(arr)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
+function remember() {
+  sessionStorage.setItem("aib_subject", selSubject);
+  sessionStorage.setItem("aib_class", selClass);
+}
 
 function render() {
-  const subjects = uniq(allTests.map((t) => t.subject));
-  if (!subjects.includes(selSubject)) selSubject = "";
-  const classes = uniq(allTests.filter((t) => t.subject === selSubject).map((t) => t.className));
-  if (!classes.includes(selClass)) selClass = "";
-  const matches = selSubject && selClass ? allTests.filter((t) => t.subject === selSubject && t.className === selClass) : [];
-
   if (allTests.length === 0) {
-    content.innerHTML = `<div class="card"><h1>Take a Test</h1><div class="empty-state">No tests are available yet. Please check back later.</div></div>`;
+    content.innerHTML = `<div class="card"><h1>Hi ${escapeHtml(firstName)} 👋</h1><div class="empty-state">No tests are available yet. Please check back soon.</div></div>`;
     return;
   }
+  const subjects = uniq(allTests.map((t) => t.subject));
+  if (!subjects.includes(selSubject)) selSubject = subjects.length === 1 ? subjects[0] : "";
+  const classes = uniq(allTests.filter((t) => t.subject === selSubject).map((t) => t.className));
+  if (!classes.includes(selClass)) selClass = classes.length === 1 ? classes[0] : "";
+  remember();
 
-  const opts = (list, cur, placeholder) =>
-    `<option value="">${placeholder}</option>` + list.map((v) => `<option value="${escapeHtml(v)}" ${v === cur ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
+  // Once subject + class are known, the picker disappears and the test takes over.
+  if (selSubject && selClass) return renderStage();
 
+  const inProgress = allTests.find((t) => t.attemptStatus === "IN_PROGRESS");
+  const chips = (list, attr) => list.map((v) => `<button class="chip" data-${attr}="${escapeHtml(v)}">${escapeHtml(v)}</button>`).join("");
   content.innerHTML = `
+    <div class="hello"><h1>Hi ${escapeHtml(firstName)} 👋</h1><p>Ready when you are. Let's find your test.</p></div>
+    ${inProgress ? `<div class="resume"><span>⏱ You have a test in progress: ${escapeHtml(inProgress.title)}</span><a class="btn btn-primary" href="/test.html?testId=${encodeURIComponent(inProgress.id)}">Continue</a></div>` : ""}
     <div class="card">
-      <h1>Take a Test</h1>
-      <p class="sub">Choose your subject and class, then pick a test.</p>
-      <label for="subjectSel">Subject</label>
-      <select id="subjectSel">${opts(subjects, selSubject, "Select a subject…")}</select>
-      <label for="classSel">Class</label>
-      <select id="classSel" ${selSubject ? "" : "disabled"}>${opts(classes, selClass, selSubject ? "Select a class…" : "Select a subject first")}</select>
-    </div>
-    <div id="testList">${matches.map(testCard).join("")}</div>
-    ${selSubject && selClass && matches.length === 0 ? `<div class="card"><div class="empty-state">No tests for this subject and class yet.</div></div>` : ""}
-  `;
+      <div class="step-label">1 · Subject</div>
+      <div class="chips">${chips(subjects, "subject")}</div>
+      ${selSubject ? `<div class="step-label">2 · Class</div><div class="chips">${chips(classes, "class")}</div>` : ""}
+    </div>`;
+  content.querySelectorAll("[data-subject]").forEach((b) => b.addEventListener("click", () => { selSubject = b.dataset.subject; selClass = ""; render(); }));
+  content.querySelectorAll("[data-class]").forEach((b) => b.addEventListener("click", () => { selClass = b.dataset.class; render(); }));
+  const sel = content.querySelector(".chips:last-of-type .chip"); if (selSubject && sel) sel.focus({ preventScroll: true });
+}
 
-  document.getElementById("subjectSel").addEventListener("change", (e) => {
-    selSubject = e.target.value; selClass = "";
-    sessionStorage.setItem("aib_subject", selSubject); sessionStorage.removeItem("aib_class");
-    render();
-  });
-  document.getElementById("classSel").addEventListener("change", (e) => {
-    selClass = e.target.value;
-    sessionStorage.setItem("aib_class", selClass);
-    render();
-  });
-
+function renderStage() {
+  const matches = allTests.filter((t) => t.subject === selSubject && t.className === selClass);
+  content.innerHTML = `
+    <div class="ctx-bar"><span>${escapeHtml(selSubject)} · ${escapeHtml(selClass)}</span><button class="btn-secondary" id="changeBtn">Change</button></div>
+    <div id="testList">${matches.length ? matches.map((t) => testCard(t, matches.length === 1)).join("") : `<div class="card"><div class="empty-state">No tests for this subject and class yet.</div></div>`}</div>`;
+  document.getElementById("changeBtn").addEventListener("click", () => { selClass = ""; selSubject = ""; render(); });
   document.querySelectorAll("[data-start]").forEach((b) => b.addEventListener("click", () => begin(b, "/api/attempt/start", b.dataset.start)));
   document.querySelectorAll("[data-retake]").forEach((b) => b.addEventListener("click", () => {
     if (!confirm("Erase your previous score and retake this test? Questions and answer choices will be reshuffled. Your earlier attempt stays on record for your teacher.")) return;
@@ -104,41 +113,35 @@ function windowNote(t) {
   const f = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   if (w.state === "not_open") return `This test opens on <strong>${f(w.opensAt)}</strong>.`;
   if (w.state === "closed") return `This test closed on <strong>${f(w.closesAt)}</strong>.`;
-  if (w.closesAt) return `Available until <strong>${f(w.closesAt)}</strong>. If you are still writing when it closes, your test is submitted automatically.`;
+  if (w.closesAt) return `Available until <strong>${f(w.closesAt)}</strong>. If you're still writing when it closes, your test is submitted automatically.`;
   return "";
 }
 
-function testCard(t) {
-  let action = "";
+function testCard(t, solo) {
   const w = t.window || { state: "open" };
   const locked = w.state !== "open";
+  const meta = `<div class="meta"><span class="pill">${t.questionCount} questions</span><span class="pill">${Math.round(t.durationSeconds / 60)} min</span></div>`;
+  const head = `<div class="eyebrow">${t.attemptStatus === "SUBMITTED" ? "Completed" : t.attemptStatus === "IN_PROGRESS" ? "In progress" : "Your test"}</div><h2>${escapeHtml(t.title)}</h2>${meta}`;
+  const desc = t.description ? `<p class="desc">${escapeHtml(t.description)}</p>` : "";
+  let body = "";
   if (t.attemptStatus === "NOT_STARTED" && locked) {
-    action = `<div class="info-banner">${windowNote(t)}</div>`;
+    body = `<div class="info-banner" style="margin-top:16px">${windowNote(t)}</div>`;
   } else if (t.attemptStatus === "NOT_STARTED") {
-    action = `
-      <div class="info-banner">Once you click <strong>Start Test</strong>, the countdown begins immediately and cannot be paused. Each attempt draws a freshly shuffled set of questions.</div>
-      ${windowNote(t) ? `<p class="hint">${windowNote(t)}</p>` : ""}
-      <button class="btn-primary btn-block" data-start="${t.id}">Start Test</button>`;
+    body = `<p class="luck">${luck}</p>${desc}
+      <button class="btn-primary btn-start" data-start="${t.id}">Start Test →</button>
+      <p class="fine">The timer starts the moment you click and can't be paused. Questions are shuffled for every attempt.${windowNote(t) ? "<br>" + windowNote(t) : ""}</p>`;
   } else if (t.attemptStatus === "IN_PROGRESS") {
-    action = `
-      <div class="info-banner">You have this test in progress (attempt #${t.attemptNumber}). Continue where you left off.</div>
-      <a class="btn btn-primary btn-block" href="/test.html?testId=${encodeURIComponent(t.id)}">Continue Test</a>`;
+    body = `<p class="luck">Welcome back. Pick up right where you left off. 🍀</p>
+      <a class="btn btn-primary btn-start stop-pulse" href="/test.html?testId=${encodeURIComponent(t.id)}">Continue Test →</a>
+      <p class="fine">Attempt #${t.attemptNumber}. Your answers were saved.</p>`;
   } else if (t.lastScore) {
     const l = t.lastScore;
-    action = `
-      <p class="sub">Attempt #${t.attemptNumber} score: <strong>${l.percentage}%</strong> (${l.correctCount} of ${l.totalQuestions} correct)</p>
-      <a class="btn btn-primary btn-block" href="/results.html?testId=${encodeURIComponent(t.id)}">View Your Result</a>
-      ${locked
-        ? `<p class="hint" style="margin-top:10px;">${windowNote(t)} Retakes are only possible while the test is open.</p>`
-        : `<button class="btn-secondary btn-block" style="margin-top:10px;" data-retake="${t.id}">Erase Score &amp; Retake Test</button>${windowNote(t) ? `<p class="hint">${windowNote(t)}</p>` : ""}`}`;
+    body = `<p class="luck">Attempt #${t.attemptNumber}: <strong>${l.percentage}%</strong> (${l.correctCount} of ${l.totalQuestions} correct)</p>
+      <a class="btn btn-primary btn-start stop-pulse" href="/results.html?testId=${encodeURIComponent(t.id)}">View Your Result</a>
+      ${locked ? `<p class="fine">${windowNote(t)} Retakes are only possible while the test is open.</p>`
+        : `<button class="btn-secondary" data-retake="${t.id}">Erase Score &amp; Retake</button>${windowNote(t) ? `<p class="fine">${windowNote(t)}</p>` : ""}`}`;
   }
-  return `
-    <div class="card">
-      <h2 style="margin-top:0;">${escapeHtml(t.title)}</h2>
-      <p class="sub">${escapeHtml(t.subject)} · ${escapeHtml(t.className)} · ${t.questionCount} questions · ${Math.round(t.durationSeconds / 60)} minute time limit</p>
-      ${t.description ? `<p>${escapeHtml(t.description)}</p>` : ""}
-      ${action}
-    </div>`;
+  return `<div class="card stage ${solo ? "" : "compact"}">${head}${body}</div>`;
 }
 
 async function begin(btn, path, testId) {

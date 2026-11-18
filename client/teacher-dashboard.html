@@ -40,15 +40,25 @@
   <div id="paneSettings" style="display:none;">
     <div class="card">
       <div class="toolbar">
-        <h2 style="margin:0;">Tests</h2>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button class="btn-primary" id="newTestBtn">+ New Test</button>
-          <button class="btn-secondary" id="deleteTestBtn">Delete Test</button>
-        </div>
+        <h2 style="margin:0;">Your tests</h2>
+        <button class="btn-primary" id="newTestBtn">+ New Test</button>
       </div>
-      <label for="testSelect">Select a test to edit</label>
+      <label for="testSelect">Select a test to manage</label>
       <select id="testSelect"></select>
       <div id="settingsMsg"></div>
+    </div>
+
+    <div class="card" id="bankCard">
+      <div class="toolbar">
+        <h2 style="margin:0;" id="bankHeading">Questions</h2>
+        <button class="btn-primary" id="bulkImportBtn">Import Questions (JSON)</button>
+      </div>
+      <p class="hint">Each attempt draws up to the test's "questions per attempt" from the active questions below, shuffled fresh every time. Removed questions are hidden from future attempts but kept for past results.</p>
+      <div id="bankList"><p>Loading question bank…</p></div>
+    </div>
+
+    <details class="card fold" id="detailsCard">
+      <summary>Test details &amp; availability</summary>
       <h3 id="testFormHeading" style="margin-top:18px;">Test Details</h3>
       <div class="settings-grid">
         <div>
@@ -92,35 +102,31 @@
       <label><input type="checkbox" id="settingActive" style="width:auto; margin-right:6px;" checked> Visible to students</label>
       <p class="hint" id="bankCountHint"></p>
       <button class="btn-primary" id="saveSettingsBtn">Save Test</button>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2 style="margin-top:0;">Teacher Sign-Up Code</h2>
-      <p class="hint">Anyone with this code can create a TEACHER account from the sign-up screen. Share it only with other teachers, and rotate it any time — changing it here takes effect immediately and does not require a restart.</p>
+    <details class="card fold">
+      <summary>Teacher sign-up code</summary>
+      <p class="hint">Anyone with this code can create a TEACHER account. Share it only with other teachers; changing it takes effect immediately.</p>
       <div id="codeMsg"></div>
       <label for="currentCodeDisplay">Current code</label>
-      <input type="text" id="currentCodeDisplay" readonly>
+      <input type="password" id="currentCodeDisplay" readonly autocomplete="off">
       <label for="newCodeInput">Set a new code</label>
-      <input type="text" id="newCodeInput" placeholder="At least 6 characters" autocomplete="off">
-      <button class="btn-primary" id="saveCodeBtn" style="margin-top:10px;">Update Sign-Up Code</button>
-    </div>
+      <input type="password" id="newCodeInput" placeholder="At least 6 characters" autocomplete="new-password">
+      <button class="btn-primary" id="saveCodeBtn" style="margin-top:12px;">Update Sign-Up Code</button>
+    </details>
 
-    <div class="card" id="bankCard">
-      <div class="toolbar">
-        <h2 style="margin:0;" id="bankHeading">Questions</h2>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button class="btn-primary" id="bulkImportBtn">Import Questions (JSON)</button>
-        </div>
-      </div>
-      <p class="hint">Every test has its own questions. Each attempt draws up to the "Number of Questions per Test" set above from this test's active questions, shuffled fresh each time. Removed questions are hidden from future attempts but kept for past results.</p>
-      <div id="bankList"><p>Loading question bank…</p></div>
-    </div>
+    <details class="card fold danger">
+      <summary>Danger zone</summary>
+      <p class="hint">Deleting a test permanently removes its questions and every student attempt and score on it.</p>
+      <button class="btn-danger" id="deleteTestBtn">Delete this test</button>
+    </details>
   </div>
 </div>
 
 <div id="modalRoot"></div>
 
 <script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
 <script>
 document.getElementById("logoutBtn").addEventListener("click", logout);
 
@@ -365,6 +371,7 @@ function fillTestForm() {
   document.getElementById("settingActive").checked = t ? t.active : true;
   document.getElementById("settingOpens").value = t ? isoToLocalInput(t.opensAt) : "";
   document.getElementById("settingCloses").value = t ? isoToLocalInput(t.closesAt) : "";
+  document.getElementById("detailsCard").open = !t;
   document.getElementById("saveSettingsBtn").textContent = t ? "Save Test" : "Create Test";
   document.getElementById("deleteTestBtn").style.display = t ? "" : "none";
   document.getElementById("bankCard").style.display = t ? "" : "none";
@@ -409,7 +416,7 @@ async function saveSettings() {
   try {
     if (creatingNew) {
       const { test } = await api("/api/teacher/tests", { method: "POST", body });
-      msg.innerHTML = `<div class="info-banner">Test created. Now add its questions below.</div>`;
+      msg.innerHTML = `<div class="info-banner">Test created. Now add its questions in the Questions section.</div>`;
       await loadTests(test.id);
     } else {
       await api(`/api/teacher/tests/${currentTestId}`, { method: "PATCH", body });
@@ -538,7 +545,6 @@ function addQuestionBlock(question, isEditSingle) {
     <select class="f-type">
       <option value="multiple-choice">Multiple Choice</option>
       <option value="true-false">True / False</option>
-      <option value="short-answer">Short Answer (partial credit)</option>
     </select>
     <label>Question</label>
     <textarea class="f-text" rows="2">${escapeHtml(question ? question.question : "")}</textarea>
@@ -595,16 +601,6 @@ function renderBlockOptions(block, t, question) {
       <label>Correct Answer (must exactly match one option above)</label>
       <input type="text" class="f-correct-mc" value="${escapeHtml(question && question.type === "multiple-choice" ? question.correctAnswer || "" : "")}">
     `;
-  } else {
-    const fragments = question && question.type === "short-answer" && question.acceptedFragments ? question.acceptedFragments.join(", ") : "";
-    const modelAnswer = question && question.type === "short-answer" ? question.modelAnswer || "" : "";
-    wrap.innerHTML = `
-      <label>Model Answer (used for partial-credit comparison)</label>
-      <textarea class="f-model-answer" rows="2">${escapeHtml(modelAnswer)}</textarea>
-      <label>Accepted keywords / key ideas (comma-separated)</label>
-      <input type="text" class="f-fragments" value="${escapeHtml(fragments)}">
-      <p class="hint">Students who cover these ideas — even with different wording — earn partial or full credit automatically.</p>
-    `;
   }
 }
 
@@ -623,9 +619,6 @@ function readBlockAsPayload(block) {
   } else if (type === "multiple-choice") {
     body.options = Array.from(block.querySelectorAll(".f-mc-option")).map((i) => i.value).filter((v) => v.trim());
     body.correctAnswer = block.querySelector(".f-correct-mc").value;
-  } else {
-    body.modelAnswer = block.querySelector(".f-model-answer").value;
-    body.acceptedFragments = block.querySelector(".f-fragments").value.split(",").map((s) => s.trim()).filter(Boolean);
   }
   return body;
 }
@@ -697,12 +690,6 @@ const BULK_SAMPLE = `[
     "question": "0 is an even number.",
     "options": ["True", "False"],
     "correctAnswer": "True"
-  },
-  {
-    "type": "short-answer",
-    "question": "What is a variable?",
-    "correctAnswer": ["named storage", "holds a value", "stores data"],
-    "modelAnswer": "A named place in memory that stores a value."
   }
 ]`;
 
@@ -711,13 +698,13 @@ function openBulkImportModal() {
     <div class="modal-backdrop" id="biBackdrop">
       <div class="modal modal-lg">
         <h2>Import Questions (JSON)</h2>
+        <div class="modal-scroll-body">
         <p class="hint">
           Drag and drop a <code>.json</code> file onto the box, or paste the JSON into the text area. It must be an array of
           question objects (up to 300 at a time) and they are added to the selected test. Each item needs
-          <code>type</code> ("multiple-choice", "true-false" or "short-answer") and <code>question</code>.
+          <code>type</code> ("multiple-choice" or "true-false") and <code>question</code>.
           Multiple-choice/true-false also need <code>options</code> and <code>correctAnswer</code> (matching one option exactly).
-          Short-answer needs <code>correctAnswer</code> as an array of accepted keywords/phrases.
-          Optional: <code>modelAnswer</code>, <code>explanation</code>, <code>reasoning</code>, <code>marks</code> (default 1).
+          Optional: <code>explanation</code>, <code>reasoning</code>, <code>marks</code> (default 1).
         </p>
         <div id="biError"></div>
         <div class="dropzone" id="biDrop">Drag &amp; drop a <strong>.json</strong> file here</div>
@@ -726,6 +713,7 @@ function openBulkImportModal() {
           <summary class="hint" style="cursor:pointer;">Show example format</summary>
           <pre class="bulk-textarea" style="min-height:0; overflow:auto;">${escapeHtml(BULK_SAMPLE)}</pre>
         </details>
+        </div>
         <div class="actions">
           <button class="btn-secondary" id="biCancel">Cancel</button>
           <button class="btn-primary" id="biImportBtn">Import</button>

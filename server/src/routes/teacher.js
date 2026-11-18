@@ -358,9 +358,7 @@ function serializeQuestion(q) {
     type: q.type,
     question: q.question,
     options: q.options ? JSON.parse(q.options) : null,
-    correctAnswer: q.type === "short-answer" ? undefined : parsedCorrect,
-    acceptedFragments: q.type === "short-answer" ? (Array.isArray(parsedCorrect) ? parsedCorrect : parsedCorrect.fragments || []) : undefined,
-    modelAnswer: q.model_answer || null,
+    correctAnswer: parsedCorrect,
     explanation: q.explanation,
     reasoning: q.reasoning,
     marks: q.marks,
@@ -378,8 +376,8 @@ async function listQuestions(req, res, user, testId) {
 
 function validateQuestionInput(body) {
   const type = body.type;
-  if (!["multiple-choice", "true-false", "short-answer"].includes(type)) {
-    return { error: "type must be one of multiple-choice, true-false, short-answer." };
+  if (!["multiple-choice", "true-false"].includes(type)) {
+    return { error: "type must be multiple-choice or true-false (theory/short-answer questions are no longer supported)." };
   }
   const question = (body.question || "").trim();
   if (!question) return { error: "question text is required." };
@@ -398,13 +396,6 @@ function validateQuestionInput(body) {
     const correctAnswer = String(body.correctAnswer || "").trim();
     if (!options.includes(correctAnswer)) return { error: "correctAnswer must match one of the provided options exactly." };
     correctAnswerStored = correctAnswer;
-  } else {
-    const fragments = Array.isArray(body.acceptedFragments)
-      ? body.acceptedFragments.map((f) => String(f).trim()).filter(Boolean)
-      : [];
-    if (fragments.length < 1) return { error: "short-answer questions need at least one accepted keyword/fragment." };
-    correctAnswerStored = fragments;
-    modelAnswer = typeof body.modelAnswer === "string" && body.modelAnswer.trim() ? body.modelAnswer.trim() : null;
   }
 
   return {
@@ -489,12 +480,7 @@ async function bulkAddQuestions(req, res, user, testId) {
       errors.push({ index, question: "(not an object)", error: "Each item must be an object." });
       return;
     }
-    // seed-file shape compatibility: correctAnswer as an array means
-    // fragments for a short-answer question.
     const normalized = { ...raw };
-    if (normalized.type === "short-answer" && !normalized.acceptedFragments && Array.isArray(normalized.correctAnswer)) {
-      normalized.acceptedFragments = normalized.correctAnswer;
-    }
 
     const parsed = validateQuestionInput(normalized);
     if (parsed.error) {

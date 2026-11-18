@@ -142,12 +142,13 @@ function queryParam(req, name) {
 // dashboard can offer subject -> class -> test selection.
 async function handleListTests(req, res, user) {
   const tests = await db.prepare(`SELECT * FROM tests WHERE active = 1 ORDER BY subject COLLATE NOCASE, class_name COLLATE NOCASE, title COLLATE NOCASE`).all();
-  const result = [];
-  for (const t of tests) {
-    if ((await activeBankCount(t.id)) === 0) continue;
-    result.push({ ...(await publicTest(t)), ...(await statusFor(user.id, t)) });
-  }
-  sendJson(res, 200, { tests: result });
+  // Run per-test lookups in parallel (was one-by-one: slow over a remote DB).
+  const rows = await Promise.all(tests.map(async (t) => {
+    if ((await activeBankCount(t.id)) === 0) return null;
+    const [pub, status] = await Promise.all([publicTest(t), statusFor(user.id, t)]);
+    return { ...pub, ...status };
+  }));
+  sendJson(res, 200, { tests: rows.filter(Boolean) });
 }
 
 async function handleGetTest(req, res, user) {
@@ -342,8 +343,7 @@ async function buildResultPayload(attempt) {
       question: q.question,
       options: q.options ? JSON.parse(q.options) : null,
       yourAnswer: a ? a.answer_text : "",
-      correctAnswer: q.type === "short-answer" ? null : JSON.parse(q.correct_answer),
-      modelAnswer: q.type === "short-answer" ? q.model_answer : null,
+      correctAnswer: JSON.parse(q.correct_answer),
       status,
       isCorrect: status === "correct",
       marksAwarded,

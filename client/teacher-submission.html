@@ -21,6 +21,7 @@
 </div>
 
 <script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
 <script>
 document.getElementById("logoutBtn").addEventListener("click", logout);
 
@@ -62,7 +63,6 @@ function render(r) {
       <div class="score-pct">${a.correctCount} of ${a.totalQuestions} correct</div>
       <div class="stat-row">
         <div class="stat-pill"><div class="num">${a.correctCount}</div><div class="label">Correct</div></div>
-        <div class="stat-pill"><div class="num">${a.partialCount || 0}</div><div class="label">Partial</div></div>
         <div class="stat-pill"><div class="num">${a.incorrectCount}</div><div class="label">Incorrect</div></div>
         <div class="stat-pill"><div class="num">${a.timeUsedSeconds !== null ? fmtDuration(a.timeUsedSeconds) : "—"}</div><div class="label">Time Used</div></div>
         <div class="stat-pill"><div class="num">${a.submissionType === "AUTO" ? "Auto" : "Manual"}</div><div class="label">Submission</div></div>
@@ -99,12 +99,6 @@ function render(r) {
         <div class="answer-block" style="background:#e9f7ef;">
           <div class="lbl">Correct answer</div>
           <div>${escapeHtml(q.correctAnswer)}</div>
-        </div>
-      ` : ""}
-      ${q.modelAnswer ? `
-        <div class="answer-block" style="background:#e9f7ef;">
-          <div class="lbl">Model answer</div>
-          <div>${escapeHtml(q.modelAnswer)}</div>
         </div>
       ` : ""}
       ${q.explanation ? `<div class="explain-block"><span class="lbl">Explanation</span>${escapeHtml(q.explanation)}</div>` : ""}

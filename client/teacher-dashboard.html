@@ -709,6 +709,7 @@ function openBulkImportModal() {
         <div id="biError"></div>
         <div class="dropzone" id="biDrop">Drag &amp; drop a <strong>.json</strong> file here</div>
         <textarea id="biTextarea" rows="12" class="bulk-textarea" spellcheck="false" placeholder="…or paste your JSON here"></textarea>
+        <div id="biLive" class="live-check" role="status"></div>
         <details style="margin-top:8px;">
           <summary class="hint" style="cursor:pointer;">Show example format</summary>
           <pre class="bulk-textarea" style="min-height:0; overflow:auto;">${escapeHtml(BULK_SAMPLE)}</pre>
@@ -735,6 +736,16 @@ function openBulkImportModal() {
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove("over")));
   drop.addEventListener("drop", (e) => loadDroppedJson(e.dataTransfer.files));
   textarea.addEventListener("drop", (e) => { e.preventDefault(); loadDroppedJson(e.dataTransfer.files); });
+  const live = document.getElementById("biLive"), importBtn = document.getElementById("biImportBtn");
+  let liveTimer;
+  window.refreshLiveCheck = () => {
+    const r = UI.checkQuestionsJson(textarea.value);
+    live.className = "live-check" + (r.state === "ok" ? " ok" : r.state === "bad" ? " bad" : "");
+    live.textContent = r.message;
+    importBtn.disabled = r.state !== "ok" && r.state !== "bad" ? true : r.message.startsWith("Not valid") || r.message.startsWith("Expected");
+  };
+  textarea.addEventListener("input", () => { clearTimeout(liveTimer); liveTimer = setTimeout(window.refreshLiveCheck, 250); });
+  window.refreshLiveCheck();
 }
 
 async function loadDroppedJson(files) {
@@ -749,6 +760,7 @@ async function loadDroppedJson(files) {
   try {
     const text = (await file.text()).replace(/^\uFEFF/, "");
     document.getElementById("biTextarea").value = text;
+    if (window.refreshLiveCheck) window.refreshLiveCheck();
     errBox.innerHTML = `<div class="info-banner">Loaded ${escapeHtml(file.name)}. Check it below, then click Import.</div>`;
   } catch (err) {
     errBox.innerHTML = `<div class="error-banner">Couldn't read that file: ${escapeHtml(err.message)}</div>`;

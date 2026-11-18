@@ -55,12 +55,12 @@ function escapeHtml(str) {
         <div style="font-size:13px; letter-spacing:0.05em; color:var(--text-muted); font-weight:700;">TEST COMPLETE${a.attemptNumber > 1 ? ` · ATTEMPT #${a.attemptNumber}` : ""}</div>
         <h1 style="margin-top:8px;">${escapeHtml(r.student.fullName)}</h1>
         <div class="sub" style="margin-top:4px;">${escapeHtml(r.test.title)} · ${escapeHtml(r.test.subject)} · ${escapeHtml(r.test.className)}</div>
-        <div class="score-big" id="scoreBig">0%</div>
+        ${UI.ring(a.percentage)}
         <div class="score-pct">${a.correctCount} of ${a.totalQuestions} correct</div>
         <p class="cheer">${a.percentage >= 90 ? "Outstanding work! 🎉" : a.percentage >= 70 ? "Great job. You clearly know this! 🌟" : a.percentage >= 50 ? "Solid effort. Review below and you'll level up fast. 💪" : "Every miss below is a clue. Read them, retake, and watch it climb. 🌱"}</p>
         <div class="stat-row">
           <div class="stat-pill"><div class="num">${a.correctCount}</div><div class="label">Correct</div></div>
-          <div class="stat-pill"><div class="num">${a.incorrectCount}</div><div class="label">Incorrect</div></div>
+          <div class="stat-pill"><div class="num">${a.incorrectCount}</div><div class="label">Not yet</div></div>
           <div class="stat-pill"><div class="num">${a.timeUsedSeconds !== null ? fmtDuration(a.timeUsedSeconds) : "—"}</div><div class="label">Time Used</div></div>
           <div class="stat-pill"><div class="num">${a.submissionType === "AUTO" ? "Auto" : "Manual"}</div><div class="label">Submission</div></div>
         </div>
@@ -74,12 +74,13 @@ function escapeHtml(str) {
       <div id="reviewList"></div>
     `;
 
+    UI.ringAnimate();
     UI.countUp(document.getElementById("scoreBig"), a.percentage);
     if (a.percentage >= 70) setTimeout(() => UI.confetti(a.percentage >= 90 ? 200 : 100), 500);
     const list = document.getElementById("reviewList");
     r.review.forEach((q) => {
       const status = q.status || (q.isCorrect ? "correct" : "incorrect");
-      const badgeLabel = status === "correct" ? "✓ Correct" : status === "partial" ? "◐ Partial Credit" : "✗ Incorrect";
+      const badgeLabel = status === "correct" ? "✓ Correct" : status === "partial" ? "◐ Partial Credit" : "Not yet";
       const item = document.createElement("div");
       item.className = "review-item " + status;
       item.innerHTML = `

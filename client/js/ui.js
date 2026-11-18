@@ -32,7 +32,36 @@ const UI = (() => {
     const t = document.createElement("div"); t.className = "ui-toast"; t.textContent = msg; t.setAttribute("role", "status");
     document.body.appendChild(t); setTimeout(() => { t.classList.add("out"); setTimeout(() => t.remove(), 300); }, ms);
   }
-  return { confetti, countUp, toast };
+  function ring(pct) {
+    const c = 2 * Math.PI * 54, col = pct >= 70 ? "var(--status-success)" : pct >= 50 ? "var(--brand-primary)" : "var(--status-notyet)";
+    return `<div class="ring"><svg viewBox="0 0 128 128" aria-hidden="true"><circle cx="64" cy="64" r="54" class="ring-bg"/><circle cx="64" cy="64" r="54" class="ring-fg" style="stroke:${col};stroke-dasharray:${c};stroke-dashoffset:${c}" data-off="${c * (1 - pct / 100)}"/></svg><div class="score-big" id="scoreBig">0%</div></div>`;
+  }
+  function ringAnimate() {
+    const f = document.querySelector(".ring-fg"); if (!f) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => { f.style.strokeDashoffset = f.dataset.off; }));
+  }
+  // Live check for the question-import JSON. Returns { state: "empty"|"ok"|"bad", message }.
+  function checkQuestionsJson(text) {
+    if (!text.trim()) return { state: "empty", message: "" };
+    let data;
+    try { data = JSON.parse(text.replace(/^\uFEFF/, "")); }
+    catch (e) { return { state: "bad", message: "Not valid JSON yet: " + e.message }; }
+    if (data && !Array.isArray(data) && Array.isArray(data.questions)) data = data.questions;
+    if (!Array.isArray(data) || !data.length) return { state: "bad", message: "Expected a non-empty array of questions in [ ]." };
+    const problems = [];
+    data.forEach((q, i) => {
+      const n = "#" + (i + 1);
+      if (!q || typeof q !== "object") return problems.push(n + " is not an object");
+      if (!["multiple-choice", "true-false"].includes(q.type)) return problems.push(n + ' needs type "multiple-choice" or "true-false"');
+      if (!String(q.question || "").trim()) return problems.push(n + " has no question text");
+      const opts = q.type === "true-false" ? ["True", "False"] : Array.isArray(q.options) ? q.options.map((o) => String(o).trim()).filter(Boolean) : [];
+      if (q.type === "multiple-choice" && opts.length < 2) return problems.push(n + " needs at least 2 options");
+      if (!opts.includes(String(q.correctAnswer || "").trim())) problems.push(n + " correctAnswer must match one option exactly");
+    });
+    if (problems.length) return { state: "bad", message: problems.length + " of " + data.length + " need fixing: " + problems.slice(0, 3).join("; ") + (problems.length > 3 ? "…" : "") };
+    return { state: "ok", message: "✓ " + data.length + " question" + (data.length === 1 ? "" : "s") + " look good. Ready to import." };
+  }
+  return { confetti, countUp, toast, ring, ringAnimate, checkQuestionsJson };
 })();
 
 // Eye-reveal for every password field (and any input marked data-secret).

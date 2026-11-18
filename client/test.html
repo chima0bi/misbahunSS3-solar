@@ -6,9 +6,9 @@
 <title>Assessment in Progress — aiB Assessment</title>
 <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
+<body class="testing">
 <div class="topbar">
-  <div class="brand">aiB Assessment</div>
+  <span></span>
   <div class="user-info">
     <span id="saveStatus" style="font-size:12.5px;"></span>
     <span class="timer" id="timerBox">--:--</span>
@@ -36,7 +36,9 @@ let toasted = null; // null until first render so resumed tests do not re-celebr
 let fiveWarned = false;
 let allowLeave = false; // set before our own redirects so the browser doesn't show "Leave site?"
 function goTo(url) { allowLeave = true; window.location.href = url; }
-function goToResults() { goTo(`/results.html?testId=${encodeURIComponent(attempt ? attempt.testId : testId)}`); }
+function goToResults() {
+  try { if (attempt) localStorage.removeItem("aib_ans_" + attempt.id); } catch {}
+  goTo(`/results.html?testId=${encodeURIComponent(attempt ? attempt.testId : testId)}`); }
 
 const content = document.getElementById("content");
 const timerBox = document.getElementById("timerBox");
@@ -62,6 +64,13 @@ async function init() {
     return;
   }
 
+  // Local safety copy: if the network dropped mid-test, restore and re-send answers the server never got.
+  try {
+    const loc = JSON.parse(localStorage.getItem("aib_ans_" + attempt.id) || "{}");
+    Object.keys(loc).forEach((qid) => {
+      if (loc[qid] && !(answers[qid] && String(answers[qid]).trim())) { answers[qid] = loc[qid]; saveAnswer(qid, loc[qid]); }
+    });
+  } catch { /* storage unavailable: server autosave still applies */ }
   clockOffsetMs = new Date(attempt.serverNow).getTime() - Date.now();
   renderShell();
   renderQuestion();
@@ -91,8 +100,8 @@ function startTimer() {
 function updateTimerDisplay() {
   const remainingSec = Math.max(0, Math.floor(getRemainingMs() / 1000));
   timerBox.textContent = fmtTime(remainingSec);
-  if (remainingSec <= 300 && remainingSec > 0 && !fiveWarned) { fiveWarned = true; UI.toast("5 minutes left. Stay steady, you're doing fine ⏳"); }
-  timerBox.className = "timer" + (remainingSec <= 300 ? " danger" : remainingSec <= 900 ? " warn" : "");
+  if (remainingSec <= 120 && remainingSec > 0 && !fiveWarned) { fiveWarned = true; UI.toast("2 minutes left. Stay steady, you're doing fine ⏳"); }
+  timerBox.className = "timer" + (remainingSec <= 30 ? " danger" : remainingSec <= 120 ? " warn" : "");
 }
 
 async function resyncWithServer() {
@@ -227,6 +236,7 @@ function renderQuestion() {
 }
 
 async function saveAnswer(questionId, answerText) {
+  try { const k = "aib_ans_" + attempt.id, o = JSON.parse(localStorage.getItem(k) || "{}"); o[questionId] = answerText; localStorage.setItem(k, JSON.stringify(o)); } catch {}
   saveStatus.textContent = "Saving…";
   try {
     await api(`/api/attempt/${attempt.id}/answer`, { method: "POST", body: { questionId, answerText } });

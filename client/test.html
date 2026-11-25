@@ -148,10 +148,10 @@ function renderShell() {
         <button class="btn-submit" id="submitBtn">Submit Test</button>
       </div>
       <div id="questionBody"></div>
-      <div class="q-bottombar">
-        <button class="btn-secondary" id="prevBtn">&larr; Previous</button>
-        <button class="btn-primary" id="nextBtn">Next &rarr;</button>
-      </div>
+    </div>
+    <div class="q-bottombar">
+      <button class="btn-secondary" id="prevBtn">&larr; Previous</button>
+      <button class="btn-primary" id="nextBtn">Next &rarr;</button>
     </div>
   `;
   document.getElementById("prevBtn").addEventListener("click", () => { if (currentIndex > 0) { currentIndex--; renderQuestion(); } });
@@ -197,8 +197,6 @@ function renderQuestion() {
         <span>${escapeHtml(opt)}</span>
       </label>
     `).join("");
-  } else {
-    inputHtml = `<textarea id="shortAnswer" rows="4" placeholder="Type your answer…">${escapeHtml(existing)}</textarea>`;
   }
 
   document.getElementById("qLabel").textContent = `QUESTION ${currentIndex + 1} OF ${questions.length}`;
@@ -218,13 +216,6 @@ function renderQuestion() {
         renderNav();
         document.getElementById("nextBtn").classList.add("nudge");
       });
-    });
-  } else {
-    const textarea = document.getElementById("shortAnswer");
-    textarea.addEventListener("input", () => {
-      answers[q.id] = textarea.value;
-      clearTimeout(saveTimers[q.id]);
-      saveTimers[q.id] = setTimeout(() => { saveAnswer(q.id, textarea.value); renderNav(); }, 600);
     });
   }
 

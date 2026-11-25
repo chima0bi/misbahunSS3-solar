@@ -242,7 +242,7 @@ async function loadStats() {
         <div class="stat-pill"><div class="num">${fmtDuration(s.fastestTimeSeconds)}</div><div class="label">Fastest</div></div>
         <div class="stat-pill"><div class="num">${fmtDuration(s.slowestTimeSeconds)}</div><div class="label">Slowest</div></div>
       </div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; margin-top:18px;">
+      <div class="cols-2">
         <div>
           <h3>Score Distribution</h3>
           ${distOrder.map((k) => `
